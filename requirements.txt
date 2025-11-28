@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+passlib[bcrypt]
+colorlog
+python-jose
+email-validator

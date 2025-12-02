@@ -1,6 +1,15 @@
 from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger
-
+from sqlalchemy.types import Text
 from src.core.models import Base
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum
+import enum
+
+
+class CancelReasonEnum(enum.Enum):
+    HEARING_RESCHEDULED = "Hearing rescheduled"
+    WITNESS_ABSENT = "Witness absent"
+    ATTORNEY_ABSENT = "Attorney absent"
+    JUDGE_ABSENT = "Judge Absent"
 
 
 class Jobs(Base):
@@ -22,4 +31,9 @@ class Jobs(Base):
     confirmation_notes_html = Column(String, nullable=True)
     cancel_by = Column(Integer, nullable=True)
     cancel_date = Column(DateTime, nullable=True)
-    
+    job_no = Column(Integer, nullable=True)
+    cancel_details = Column(Text, nullable=True)
+    cancel_resone = Column(
+        PgEnum(CancelReasonEnum, name="cancel_reason_enum"),
+        nullable=True
+    )

@@ -55,7 +55,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(detail="token expired", status_code=status.HTTP_403_FORBIDDEN)
     
     user = Users.get(decoded_data.get('id'))
-    set_context(user=user.LoginName)
+    if not user:
+        raise HTTPException(detail="user not found", status_code=status.HTTP_401_UNAUTHORIZED)
+    set_context(login_name=user.login_name)
     set_context(user_id=user.id)
     set_context(db=db)
     

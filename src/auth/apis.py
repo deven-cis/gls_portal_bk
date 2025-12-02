@@ -2,27 +2,25 @@ from datetime import datetime
 
 from fastapi.exceptions import HTTPException
 from fastapi import status
-from pydantic import EmailStr
-
 from src.auth.schema import LoginCredentialSchema
 from src.users.models import Users
 from src.users.utils import verify_password
 from src.core.logger import logger
 from src.auth.utils import create_access_token, decode_token
-from src.core.config import config
 
 
 async def login_user(data: LoginCredentialSchema):
     """
     Login User API
     """
-    logger.info(f'Checking credentials for user login: {data.LoginName}')
-    user = Users.fetch_records({"LoginName": data.LoginName})
-    if user and verify_password(data.LoginPassword, user[0].LoginPassword):
+    logger.info(f'Checking credentials for user login: {data.login_name}')
+    logger.info(f'Checking credentials for user password: {data.login_password}')
+    user = Users.fetch_records({"login_name": data.login_name})
+    if user and verify_password(data.login_password, user[0].login_password):
         return create_access_token({
-            'LoginName': user[0].LoginName,
+            'login_name': user[0].login_name,
             'id': user[0].id
-        })
+        })  
     else:
         raise HTTPException(detail="Unable to validate credentials", status_code=status.HTTP_401_UNAUTHORIZED)
 

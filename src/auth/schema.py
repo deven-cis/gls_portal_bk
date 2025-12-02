@@ -5,8 +5,8 @@ class LoginCredentialSchema(BaseModel):
     """
     Login Credential Schema
     """
-    LoginName: EmailStr
-    LoginPassword: str
+    login_name: EmailStr
+    login_password: str
 
 class TokenResponseSchema(BaseModel):
     """

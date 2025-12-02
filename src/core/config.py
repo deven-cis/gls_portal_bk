@@ -10,10 +10,10 @@ class Settings(BaseSettings):
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
     DB_NAME: str = "gls_db"
-    ACCESS_TOKEN_EXPIRATION_TIME: int = 0
-    REFRESH_TOKEN_EXPIRATION_TIME: int = 0
-    SECRET_KEY: str = ""
-    ALGORITHM: str = ""
+    ACCESS_TOKEN_EXPIRATION_TIME: int = 3600  # 1 hour
+    REFRESH_TOKEN_EXPIRATION_TIME: int = 604800  # 7 days
+    SECRET_KEY: str = "sfiw0ef2_kansls23ml-2jwdnslknddsf"
+    ALGORITHM: str = "HS256"
     APPLICATION_NAME: str = "gls_api"
     APPLICATION_VERSION: str = "1.0.0"
     EMAIL_EXPIRATION_DELTA: int = 0

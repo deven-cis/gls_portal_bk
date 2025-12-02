@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, Integer
 
 from src.core.models import Base
 
@@ -9,3 +9,4 @@ class Cases(Base):
     case_type = Column(String, nullable=True)
     status = Column(String, nullable=True)
     trial_date = Column(DateTime, nullable=True)
+    case_no = Column(Integer, nullable=True)

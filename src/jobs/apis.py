@@ -1,12 +1,14 @@
 from typing import List
 
 from fastapi import Depends, HTTPException, status
+from sqlalchemy.orm import joinedload
 
 from src.auth.utils import get_current_user
 from src.jobs.models import Jobs
 from src.core.logger import logger
 from src.users.models import Users
 from src.cases.models import Cases
+from src.core.database import db
 
 
 async def list_jobs(
@@ -27,34 +29,29 @@ async def list_jobs_by_case(
     results = []
     try:
         user_info = Users.get(current_user.get("id"))
-        current_user_all_cases = Cases.fetch_records({"entered_by": user_info.entered_by})
-        for case in current_user_all_cases:
-            cases_jobs = Jobs.fetch_records({"case_no": case.id})  
-            for job in cases_jobs:
-                results.append({
-                    "case_short_name": case.case_short_name,
-                    "case_full_name": case.case_full_name,
-                    "case_type": case.case_type,
-                    "case_status": case.status,
-                    "job_date": job.job_date,
-                    "start_time": job.start_time,
-                    "end_time": job.end_time,
-                    "timezone_no": job.timezone_no,
-                    "status": job.status,
-                    "case_no": job.case_no,
-                    "job_loc_name": job.job_loc_name,
-                    "job_loc_address": job.job_loc_address,
-                    "job_loc_city": job.job_loc_city,
-                    "job_loc_state": job.job_loc_state,
-                    "job_loc_zip": job.job_loc_zip,
-                    "zoom_meeting_id": job.zoom_meeting_id,
-                    "cancel_by": job.cancel_by,
-                    "cancel_date": job.cancel_date,
-                })
+        logger.info(f"User info retrieved for user {user_info.id}")
+        
+        # Get cases for the current user
+        cases = db.query(Cases).filter(Cases.entered_by == user_info.entered_by).all()
+        logger.info(f"Found {len(cases)} cases for user {user_info.entered_by}")
+        
+        # Get all jobs for these cases with case details eager loaded
+        case_nos = [case.case_no for case in cases]
+        if case_nos:
+            jobs = (
+                db.query(Jobs)
+                .options(joinedload(Jobs.case))
+                .filter(Jobs.case_no.in_(case_nos))
+                .all()
+            )
+            logger.info(f"Found {len(jobs)} jobs for these cases")
+            results.extend(jobs)
+
         return results
 
-    except Exception as exc:
+    except Exception as e:
+        logger.error(f"Error fetching jobs by case: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Unable to fetch jobs for the requested case',
-        ) from exc
+        )

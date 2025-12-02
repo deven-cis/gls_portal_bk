@@ -2,15 +2,10 @@ from datetime import datetime, time
 from typing import Optional
 
 from pydantic import BaseModel
-
+from src.cases.schema import CaseSchema
 
 class JobSchema(BaseModel):
     id: int
-    case_short_name: Optional[str] = None
-    case_full_name: Optional[str] = None
-    case_type: Optional[str] = None
-    case_status: Optional[str] = None
-    case_no: Optional[int] = None
     job_date: datetime
     start_time: time
     end_time: time
@@ -29,10 +24,14 @@ class JobSchema(BaseModel):
     confirmation_notes_html: Optional[str] = None
     cancel_by: Optional[int] = None
     cancel_date: Optional[datetime] = None
+    job_no: Optional[int] = None
+    cancel_details: Optional[str] = None
+    cancel_resone: Optional[str] = None
     entered_at: Optional[datetime] = None
     last_modified_at: Optional[datetime] = None
     entered_by: Optional[int] = None
     last_modified_by: Optional[int] = None
+    case: Optional[CaseSchema] = None
 
     class Config:
         orm_mode = True

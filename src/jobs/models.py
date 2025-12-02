@@ -1,5 +1,6 @@
 from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger
 from sqlalchemy.types import Text
+from sqlalchemy.orm import relationship
 from src.core.models import Base
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 import enum
@@ -37,3 +38,6 @@ class Jobs(Base):
         PgEnum(CancelReasonEnum, name="cancel_reason_enum"),
         nullable=True
     )
+    
+    # Relationship to Cases
+    case = relationship("Cases", primaryjoin="Jobs.case_no==Cases.case_no", foreign_keys="Jobs.case_no", viewonly=True)

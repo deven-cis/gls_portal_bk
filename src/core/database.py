@@ -9,11 +9,14 @@ engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
 
+Base = declarative_base()
 
+# Create a session instance
+db = SessionLocal()
 
 def get_db():
-    db = SessionLocal()
+    session = SessionLocal()
     try:
-        yield db
+        yield session
     finally:
-        db.close()
+        session.close()

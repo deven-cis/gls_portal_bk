@@ -8,12 +8,15 @@ from src.auth.routes import auth_router
 from src.core.config import config
 from src.cases.routes import cases_router
 from src.jobs.routes import jobs_router
+from src.core.relationships import init_relationships
 
 
 app = FastAPI(
     title=config.APPLICATION_NAME,
     version=config.APPLICATION_VERSION
 )
+
+init_relationships()
 
 app.include_router(
     auth_router,

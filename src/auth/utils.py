@@ -59,6 +59,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(detail="user not found", status_code=status.HTTP_401_UNAUTHORIZED)
     set_context(login_name=user.login_name)
     set_context(user_id=user.id)
+    set_context(entered_by=user.entered_by)
     set_context(db=db)
     
     decoded_data.pop('expire')

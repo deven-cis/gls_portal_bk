@@ -4,3 +4,7 @@ venv/
 /ENVs/*
 __pycache__/
 log_files/*
+.pyc
+*.pyo
+*.log
+celerybeat-schedule.*

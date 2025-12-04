@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class CaseSchema(BaseModel):
     id: int
-    case_no: Optional[str] = None
+    case_no: Optional[int] = None
     case_short_name: Optional[str] = None
     case_full_name: Optional[str] = None
     case_type: Optional[str] = None

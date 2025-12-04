@@ -1,4 +1,5 @@
 from typing import List
+from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import joinedload
@@ -6,10 +7,9 @@ from sqlalchemy.orm import joinedload
 from src.auth.utils import get_current_user
 from src.jobs.models import Jobs
 from src.core.logger import logger
-from src.users.models import Users
 from src.cases.models import Cases
 from src.core.database import db
-
+from src.core.context import get_context
 
 async def list_jobs(
     current_user: dict = Depends(get_current_user),
@@ -26,28 +26,16 @@ async def list_jobs_by_case(
     """
     Return jobs for a specific case that belong to the current user.
     """
-    results = []
     try:
-        user_info = Users.get(current_user.get("id"))
-        logger.info(f"User info retrieved for user {user_info.id}")
-        
-        # Get cases for the current user
-        cases = db.query(Cases).filter(Cases.entered_by == user_info.entered_by).all()
-        logger.info(f"Found {len(cases)} cases for user {user_info.entered_by}")
-        
-        # Get all jobs for these cases with case details eager loaded
-        case_nos = [case.case_no for case in cases]
-        if case_nos:
-            jobs = (
-                db.query(Jobs)
-                .options(joinedload(Jobs.case))
-                .filter(Jobs.case_no.in_(case_nos))
-                .all()
-            )
-            logger.info(f"Found {len(jobs)} jobs for these cases")
-            results.extend(jobs)
-
-        return results
+        user_entered_by = get_context('entered_by')
+        jobs = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .options(joinedload(Jobs.case))
+            .filter(Cases.entered_by == user_entered_by)
+            .all()
+        )
+        return jobs
 
     except Exception as e:
         logger.error(f"Error fetching jobs by case: {str(e)}", exc_info=True)
@@ -55,3 +43,68 @@ async def list_jobs_by_case(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Unable to fetch jobs for the requested case',
         )
+
+
+async def list_pending_jobs(
+    current_user: dict = Depends(get_current_user),
+) -> List[Jobs]:
+    """
+    Return only pending jobs (today's jobs in progress or waiting to start).
+    Status: session_not_started or session_in_progress
+    Exclude: cancelled jobs
+    """
+    try:
+        user_entered_by = get_context('entered_by')
+        today = datetime.now().date()
+        
+        jobs = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .options(joinedload(Jobs.case))
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.job_date >= datetime.combine(today, datetime.min.time()))
+            .filter(Jobs.job_date < datetime.combine(today + timedelta(days=1), datetime.min.time()))
+            .filter(Jobs.computed_status.in_(["session_not_started", "session_in_progress"]))
+            .filter(Jobs.computed_status != "cancelled")
+            .all()
+        )
+        logger.info(f"Found {len(jobs)} pending jobs for user {user_entered_by}")
+        return jobs
+
+    except Exception as e:
+        logger.error(f"Error fetching pending jobs: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Unable to fetch pending jobs',
+        )
+
+
+async def list_upcoming_jobs(
+    current_user: dict = Depends(get_current_user),
+) -> List[Jobs]:
+    """
+    Return only upcoming jobs (tomorrow and beyond).
+    Status: upcoming
+    """
+    try:
+        user_entered_by = get_context('entered_by')
+        tomorrow = (datetime.now().date() + timedelta(days=1))
+        
+        jobs = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .options(joinedload(Jobs.case))
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.job_date >= datetime.combine(tomorrow, datetime.min.time()))
+            .all()
+        )
+        logger.info(f"Found {len(jobs)} upcoming jobs for user {user_entered_by}")
+        return jobs
+
+    except Exception as e:
+        logger.error(f"Error fetching upcoming jobs: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Unable to fetch upcoming jobs',
+        )
+    

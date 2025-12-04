@@ -31,6 +31,7 @@ class JobSchema(BaseModel):
     last_modified_at: Optional[datetime] = None
     entered_by: Optional[int] = None
     last_modified_by: Optional[int] = None
+    computed_status: Optional[str] = None
     case: Optional[CaseSchema] = None
 
     class Config:

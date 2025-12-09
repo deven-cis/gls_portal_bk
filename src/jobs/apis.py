@@ -28,6 +28,7 @@ async def list_jobs_by_case(
     """
     try:
         user_entered_by = get_context('entered_by')
+        logger.info(f"Fetching jobs for user {user_entered_by}")
         jobs = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)

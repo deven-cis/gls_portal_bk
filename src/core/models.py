@@ -1,11 +1,11 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, DateTime
+from sqlalchemy import Column, Integer, DateTime,Boolean
 from sqlalchemy.ext.declarative import as_declarative
 from sqlalchemy.orm import declared_attr
 
 from src.core.database import get_db
-from src.core.context import get_user, get_context_db
+from src.core.context import get_context, get_context_db
 
 
 @as_declarative()
@@ -15,11 +15,12 @@ class Base:
     def __tablename__(cls):
         return cls.__name__.lower()
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, index=True)
     entered_at = Column(DateTime, default=datetime.utcnow)
     entered_by = Column(Integer, nullable=False)
     last_modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_modified_by = Column(Integer, nullable=False)
+    is_archived = Column(Boolean, default=False, server_default='false')
 
     @classmethod
     def get_queryset(cls):
@@ -43,11 +44,18 @@ class Base:
         """
         db = cls.get_session()
         instance.last_modified_at = datetime.now()
-        instance.last_modified_by = get_user() or 'system'
+        
+        # Get entered_by from context (should be integer)
+        entered_by = get_context('entered_by')
+        if entered_by is None:
+            # Fallback if context is not set (should not happen in normal flow)
+            entered_by = 0  # or raise an error if context is required
+        
+        instance.last_modified_by = entered_by
         
         if not instance.id:
             instance.entered_at = datetime.now()
-            instance.entered_by = get_user() or 'system'
+            instance.entered_by = entered_by
             db.add(instance)
 
         db.commit()

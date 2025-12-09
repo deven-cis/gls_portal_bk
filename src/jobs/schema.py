@@ -2,7 +2,7 @@ from datetime import datetime, time
 from typing import Optional
 
 from pydantic import BaseModel
-from src.cases.schema import CaseSchema
+from src.cases.schema import CaseSchema, CaseListSchema
 
 class JobSchema(BaseModel):
     id: int
@@ -19,20 +19,10 @@ class JobSchema(BaseModel):
     job_loc_city: Optional[str] = None
     job_loc_state: Optional[str] = None
     job_loc_zip: Optional[str] = None
-    scheduling_notes_html: Optional[str] = None
     zoom_meeting_id: Optional[int] = None
-    confirmation_notes_html: Optional[str] = None
-    cancel_by: Optional[int] = None
-    cancel_date: Optional[datetime] = None
     job_no: Optional[int] = None
-    cancel_details: Optional[str] = None
-    cancel_resone: Optional[str] = None
-    entered_at: Optional[datetime] = None
-    last_modified_at: Optional[datetime] = None
-    entered_by: Optional[int] = None
-    last_modified_by: Optional[int] = None
     computed_status: Optional[str] = None
-    case: Optional[CaseSchema] = None
+    case: Optional[CaseListSchema] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True

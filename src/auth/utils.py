@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, Set
 from jose import jwt, JWTError
 
 from fastapi import HTTPException, status, Depends
@@ -11,8 +12,54 @@ from src.users.models import Users
 from src.core.context import set_context
 from src.core.database import get_db
 
+# In-memory set to store blacklisted tokens (for local development only)
+_blacklisted_tokens: Set[str] = set()
 
 security = HTTPBearer()
+
+
+def add_to_blacklist(token: str):
+    """Add a token to the blacklist"""
+    _blacklisted_tokens.add(token)
+
+
+def is_token_blacklisted(token: str) -> bool:
+    """Check if a token is blacklisted"""
+    return token in _blacklisted_tokens
+
+
+def create_forget_password_token(data: dict, expiration_delta: int = None):
+    """
+    Creating forget password token
+    """
+    to_encode = data.copy()
+    expiration_time = datetime.now() + timedelta(seconds=expiration_delta or config.EMAIL_EXPIRATION_DELTA)
+    to_encode.update({'expire': str(expiration_time.isoformat())})
+    forget_password_token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
+    return forget_password_token
+
+
+def verify_token(token: str):
+    """
+    Verify Token
+    """
+    # First check if token is blacklisted
+    if is_token_blacklisted(token):
+        logger.warning("Attempted to use blacklisted token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This token has been invalidated"
+        )
+    
+    decoded_data = decode_token(token)
+ 
+    if datetime.now() > datetime.fromisoformat(decoded_data.get('expire')):
+        raise HTTPException(detail="Token has expired", status_code=status.HTTP_403_FORBIDDEN)
+    
+    if not Users.get(decoded_data.get('id')):
+        raise HTTPException(detail="User not found", status_code=status.HTTP_401_UNAUTHORIZED)
+    
+    return decoded_data
 
 
 def create_access_token(data: dict, expiration_delta: int = None):
@@ -57,6 +104,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     user = Users.get(decoded_data.get('id'))
     if not user:
         raise HTTPException(detail="user not found", status_code=status.HTTP_401_UNAUTHORIZED)
+        
+    if user.require_password_change:
+        raise HTTPException(
+            detail="Password change required",
+            status_code=status.HTTP_403_FORBIDDEN
+        )    
+    
     set_context(login_name=user.login_name)
     set_context(user_id=user.id)
     set_context(entered_by=user.entered_by)

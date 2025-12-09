@@ -1,0 +1,36 @@
+from typing import Optional
+from pydantic import BaseModel
+
+
+class AttorneySchema(BaseModel):
+    id: Optional[int] = None
+    job_no: int
+    attorney_name: str
+    firm_name: str
+    notes: str
+    order_details: str
+    file_name: Optional[str] = None
+    file_name_path: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AttorneyCreateSchema(BaseModel):
+    job_no: int
+    attorney_name: str
+    firm_name: str
+    notes: str
+    order_details: str
+    file_name: Optional[str] = None
+    file_name_path: Optional[str] = None
+
+
+class AttorneyUpdateSchema(BaseModel):
+    attorney_name: Optional[str] = None
+    firm_name: Optional[str] = None
+    notes: Optional[str] = None
+    order_details: Optional[str] = None
+    file_name: Optional[str] = None
+    file_name_path: Optional[str] = None
+

@@ -4,9 +4,11 @@ from sqlalchemy.orm import relationship
 from src.core.models import Base
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 import enum
-
-# Ensure Cases model is registered before SQLAlchemy configures Jobs
-# (avoid circular import by importing near top without referencing Jobs there)
+from src.attorneys.models import Attorneys
+from src.billings.models import Billings
+from src.additional_documents.models import AdditionalDocuments
+from src.equipment_time.models import EquipmentTime
+from src.witnesses.models import Witnesses
 from src.cases.models import Cases 
 
 
@@ -55,9 +57,52 @@ class Jobs(Base):
     computed_status = Column(String(50), nullable=True, default="upcoming")
 
     # Many-to-one: each job belongs to a single case
-    # Let SQLAlchemy infer the join from the ForeignKey on `case_no`
+    # Using string reference to avoid circular imports
     case = relationship(
-        Cases,
+        "src.cases.models.Cases",
         back_populates="jobs",
         lazy="joined",
     )
+    
+    # One-to-many: each job can have multiple attorneys
+    # Using string reference to avoid circular imports
+    attorneys = relationship(
+        Attorneys,
+        back_populates="job",
+        cascade="all, delete-orphan"
+    )
+    
+    # One-to-one relationship with Billings
+    # Using string reference to avoid circular imports
+    billing = relationship(
+        Billings,
+        back_populates="job",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+    
+    # One-to-many relationship with AdditionalDocuments
+    # Using string reference to avoid circular imports
+    additional_documents = relationship(
+        AdditionalDocuments,
+        back_populates="job",
+        cascade="all, delete-orphan"
+    )
+    
+    # One-to-one relationship with EquipmentTime
+    # Using string reference to avoid circular imports
+    equipment_time = relationship(
+        EquipmentTime,
+        back_populates="job",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+    
+    # One-to-many relationship with Witnesses
+    # Using string reference to avoid circular imports
+    witnesses = relationship(
+        Witnesses,
+        back_populates="job",
+        cascade="all, delete-orphan"
+    )
+    

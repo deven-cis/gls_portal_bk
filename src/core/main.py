@@ -2,12 +2,18 @@
 Main File of FastAPI application
 """
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # from src.users.routes import user_router
 from src.auth.routes import auth_router
 from src.core.config import config
 from src.cases.routes import cases_router
 from src.jobs.routes import jobs_router
+from src.attorneys.routes import attorneys_router
+from src.billings.routes import billings_router
+from src.equipment_time.routes import equipment_time_router
+from src.additional_documents.routes import additional_documents_router
+from src.witnesses.routes import witnesses_router
 from src.core.relationships import init_relationships
 
 
@@ -16,11 +22,27 @@ app = FastAPI(
     version=config.APPLICATION_VERSION
 )
 
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",  # Default Next.js dev server
+        "http://127.0.0.1:3000",  # Alternative Next.js dev server
+        "http://192.168.2.53:3000"  # Your network URL
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"]
+)
+
 init_relationships()
 
+# Include auth router with /api prefix
 app.include_router(
     auth_router,
-    tags=['authentication']
+    prefix="/api",
+    tags=["authentication"]
 )
 
 app.include_router(
@@ -31,6 +53,31 @@ app.include_router(
 app.include_router(
     jobs_router,
     tags=['jobs']
+)
+
+app.include_router(
+    attorneys_router,
+    tags=['attorneys']
+)
+
+app.include_router(
+    billings_router,
+    tags=['billings']
+)
+
+app.include_router(
+    equipment_time_router,
+    tags=['equipment-time']
+)
+
+app.include_router(
+    additional_documents_router,
+    tags=['additional-documents']
+)
+
+app.include_router(
+    witnesses_router,
+    tags=['witnesses']
 )
 
 # app.include_router(

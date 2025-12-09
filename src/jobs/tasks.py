@@ -3,6 +3,12 @@ from src.core.celery_config import celery_app
 from src.core.database import SessionLocal
 from src.jobs.models import Jobs
 from src.core.logger import logger
+from src.attorneys.models import Attorneys
+from src.billings.models import Billings
+from src.additional_documents.models import AdditionalDocuments
+from src.equipment_time.models import EquipmentTime
+from src.witnesses.models import Witnesses
+from src.witness_videos.models import WitnessVideos
 
 @celery_app.task(name='src.jobs.tasks.update_job_statuses')
 def update_job_statuses():

@@ -1,10 +1,38 @@
+# Environment
 venv/
-.env/
+.env
 .venv/
 /ENVs/*
+
+# Python
 __pycache__/
-log_files/*
-.pyc
+*.py[cod]
+*$py.class
 *.pyo
+*.pyd
+.Python
+
+# Logs
+log_files/*
 *.log
+
+# Celery
 celerybeat-schedule.*
+celerybeat-schedule
+celerybeat.pid
+celery@*.log
+celery_implementation*
+celery_step*
+quick_start*
+setup_complete*
+
+# Documentation
+CELERY_IMPLEMENTATION.md
+CELERY_SETUP.md
+QUICK_START.md
+SETUP_COMPLETE.md
+
+# System
+*.pid
+*.swp
+*~

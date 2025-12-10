@@ -30,3 +30,10 @@ class CaseListSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+class CaseEditSchema(BaseModel):
+    case_short_name: Optional[str] = None
+    case_number: Optional[int] = None
+
+    class Config:
+        from_attributes = True        

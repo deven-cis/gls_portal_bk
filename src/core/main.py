@@ -47,7 +47,7 @@ app.include_router(
 
 app.include_router(
     cases_router,
-    tags=['cases']
+    tags=['case']
 )
 
 app.include_router(

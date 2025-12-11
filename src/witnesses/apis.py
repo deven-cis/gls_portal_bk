@@ -97,6 +97,20 @@ async def create_witness(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
+def parse_time(value: str) -> time:
+    """Parse time string to time object."""
+    if value.isdigit() and len(value) <= 2:
+        hour = int(value)
+        if 0 <= hour <= 23:
+            return time(hour, 0, 0)
+        raise ValueError(f"Hour must be 0-23")
+    
+    if value.count(':') == 1:
+        value += ':00'
+    
+    return time.fromisoformat(value)
+
+
 async def update_witness(
     witness_id: int,
     witness_name: Optional[str] = Form(None),
@@ -112,51 +126,48 @@ async def update_witness(
     current_user: dict = Depends(get_current_user),
 ) -> Witnesses:
     try:
-        db = Witnesses.get_session()
-        witness = db.query(Witnesses).filter(
-            Witnesses.id == witness_id,
-            ~Witnesses.is_archived
-        ).first()
+        # Get witness
+        witness = Witnesses.get(witness_id)
+        if not witness or witness.is_archived:
+            raise HTTPException(404, "Witness not found")
         
-        if not witness:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Witness with ID {witness_id} not found"
-            )
-        
+        # Update fields
         if witness_name is not None:
             witness.witness_name = witness_name
         if witness_email is not None:
             witness.witness_email = witness_email
-        if actual_start_time is not None:
-            witness.actual_start_time = time.fromisoformat(actual_start_time) if isinstance(actual_start_time, str) else actual_start_time
-        if actual_end_time is not None:
-            witness.actual_end_time = time.fromisoformat(actual_end_time) if isinstance(actual_end_time, str) else actual_end_time
+        if read_sign_date is not None:
+            witness.read_sign_date = read_sign_date
+        if read_sign_to is not None:
+            witness.read_sign_to = read_sign_to
         if read_on_text is not None:
             witness.read_on_text = read_on_text
-        if read_on_time is not None:
-            witness.read_on_time = time.fromisoformat(read_on_time) if isinstance(read_on_time, str) else read_on_time
         if read_off_text is not None:
             witness.read_off_text = read_off_text
-        if read_off_time is not None:
-            witness.read_off_time = time.fromisoformat(read_off_time) if isinstance(read_off_time, str) else read_off_time
         
-        from src.core.context import get_context
-        from datetime import datetime
-        entered_by = get_context('entered_by') or 0
-        witness.last_modified_at = datetime.now()
-        witness.last_modified_by = entered_by
+        # Update time fields
+        if actual_start_time:
+            witness.actual_start_time = parse_time(actual_start_time)
+        if actual_end_time:
+            witness.actual_end_time = parse_time(actual_end_time)
+        if read_on_time:
+            witness.read_on_time = parse_time(read_on_time)
+        if read_off_time:
+            witness.read_off_time = parse_time(read_off_time)
         
-        db.commit()
-        db.refresh(witness)
-        logger.info(f"Successfully updated witness {witness_id}")
+        # Save (handles last_modified_at and last_modified_by)
+        witness.save()
+        
+        logger.info(f"Updated witness {witness_id}")
         return witness
+        
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid time format: {str(e)}")
     except Exception as e:
         logger.error(f"Error updating witness {witness_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
+        raise HTTPException(500, "Failed to update witness")
 
 async def delete_witness(
     witness_id: int,

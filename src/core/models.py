@@ -37,30 +37,24 @@ class Base:
         """
         return get_context_db() or next(get_db())
 
-    @classmethod
-    def save(cls, instance):
-        """
-        Save the instance on the database - Update or Create a new record
-        """
-        db = cls.get_session()
-        instance.last_modified_at = datetime.now()
+    def save(self):  
+        db = self.get_session()
+        self.last_modified_at = datetime.now()
         
-        # Get entered_by from context (should be integer)
         entered_by = get_context('entered_by')
         if entered_by is None:
-            # Fallback if context is not set (should not happen in normal flow)
-            entered_by = 0  # or raise an error if context is required
+            entered_by = 0
         
-        instance.last_modified_by = entered_by
+        self.last_modified_by = entered_by
         
-        if not instance.id:
-            instance.entered_at = datetime.now()
-            instance.entered_by = entered_by
-            db.add(instance)
-
+        if not self.id:
+            self.entered_at = datetime.now()
+            self.entered_by = entered_by
+            db.add(self)
+        
         db.commit()
-        db.refresh(instance)
-        return instance
+        db.refresh(self)
+        return self
 
     @classmethod
     def get(cls, id: int):

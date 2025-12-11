@@ -38,26 +38,17 @@ def create_forget_password_token(data: dict, expiration_delta: int = None):
     forget_password_token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
     return forget_password_token
 
-
 def verify_token(token: str):
     """
     Verify Token
     """
-    # First check if token is blacklisted
-    if is_token_blacklisted(token):
-        logger.warning("Attempted to use blacklisted token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="This token has been invalidated"
-        )
-    
     decoded_data = decode_token(token)
  
     if datetime.now() > datetime.fromisoformat(decoded_data.get('expire')):
-        raise HTTPException(detail="Token has expired", status_code=status.HTTP_403_FORBIDDEN)
+        raise HTTPException(detail="token expired", status_code=status.HTTP_403_FORBIDDEN)
     
     if not Users.get(decoded_data.get('id')):
-        raise HTTPException(detail="User not found", status_code=status.HTTP_401_UNAUTHORIZED)
+        raise HTTPException(detail="user not found", status_code=status.HTTP_401_UNAUTHORIZED)
     
     return decoded_data
 

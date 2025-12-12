@@ -66,7 +66,8 @@ def create_access_token(data: dict, expiration_delta: int = None):
     refresh_token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
     return {
         'access_token': access_token,
-        'refresh_token': refresh_token
+        'refresh_token': refresh_token,
+        'entered_by': data.get('entered_by')
     }
 
 def decode_token(token: str):

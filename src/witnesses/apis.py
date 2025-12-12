@@ -10,6 +10,7 @@ from src.witness_videos.models import WitnessVideos
 from src.jobs.models import Jobs
 from src.core.file_utils import save_video_file
 from src.core.logger import logger
+from src.core.context import get_context
 
 
 async def list_witnesses(
@@ -24,10 +25,31 @@ async def list_witnesses(
             query = query.filter(Witnesses.job_no == job_no)
         
         witnesses = query.all()
-        logger.info(f"Successfully retrieved {len(witnesses)} witnesses")
+        logger.info(f"Successfully retrieved {len(witnesses)} witnesses for job {job_no} entered by {user_entered_by}")
         return witnesses
     except Exception as e:
         logger.error(f"Error listing witnesses: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+async def get_job_witnessee(
+    job_no: int,
+    current_user: dict = Depends(get_current_user),
+) -> List[Witnesses]:
+    try:
+        user_entered_by = get_context('entered_by')
+        logger.info(f"Getting witnesses for job {job_no} entered by {user_entered_by}")
+        db = Witnesses.get_session()
+        query = db.query(Witnesses).filter(
+            Witnesses.job_no == job_no,
+            Witnesses.entered_by == user_entered_by,
+            ~Witnesses.is_archived
+        )
+        witnesses = query.all()
+        logger.info(f"Successfully retrieved {len(witnesses)} witnesses for job {job_no} entered by {user_entered_by}")
+        return witnesses
+    except Exception as e:
+        logger.error(f"Error getting witnesses for job {job_no}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
@@ -36,9 +58,11 @@ async def get_witness(
     current_user: dict = Depends(get_current_user),
 ) -> Witnesses:
     try:
+        user_entered_by = get_context('entered_by')
         db = Witnesses.get_session()
         witness = db.query(Witnesses).filter(
             Witnesses.id == witness_id,
+            Witnesses.entered_by == user_entered_by,
             ~Witnesses.is_archived
         ).first()
         

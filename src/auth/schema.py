@@ -8,12 +8,25 @@ class LoginCredentialSchema(BaseModel):
     login_name: str
     login_password: str
 
+class UserResponseSchema(BaseModel):
+    """
+    User Response Schema
+    """
+    id: int
+    full_name: str
+    email: str
+    login_name: str
+    require_password_change: bool = False  
+    entered_by: int
+    last_modified_by: int
+
 class TokenResponseSchema(BaseModel):
     """
     Token Response Schema
     """
     access_token: str
     refresh_token: str
+    user: UserResponseSchema
 
 
 class PasswordResetSchema(BaseModel):

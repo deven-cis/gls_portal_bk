@@ -33,7 +33,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"]
+    # expose_headers=["Content-Disposition"]
 )
 
 init_relationships()
@@ -56,6 +56,11 @@ app.include_router(
 )
 
 app.include_router(
+    witnesses_router,
+    tags=['witnesses']
+
+)
+app.include_router(
     attorneys_router,
     tags=['attorneys']
 )
@@ -75,10 +80,6 @@ app.include_router(
     tags=['additional-documents']
 )
 
-app.include_router(
-    witnesses_router,
-    tags=['witnesses']
-)
 
 # app.include_router(
 #     user_router,

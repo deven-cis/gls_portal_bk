@@ -44,10 +44,26 @@ async def login_user(data: LoginCredentialSchema):
     logger.info(f'Checking credentials for user password: {data.login_password}')
     user = Users.fetch_records({"login_name": data.login_name})
     if user and verify_password(data.login_password, user[0].login_password):
-        return create_access_token({
-            'login_name': user[0].login_name,
-            'id': user[0].id
-        })  
+        user_obj = user[0]
+        token_data = create_access_token({
+            'login_name': user_obj.login_name,
+            'id': user_obj.id,
+        })
+        
+        # Create user response object with proper boolean handling
+        user_response = {   
+            'id': user_obj.id,
+            'full_name': user_obj.full_name or '',
+            'email': user_obj.email or '',
+            'login_name': user_obj.login_name or '',
+            'require_password_change': bool(getattr(user_obj, 'require_password_change', False)),
+            'entered_by': getattr(user_obj, 'entered_by', None),
+            'last_modified_by': getattr(user_obj, 'last_modified_by', None)
+        }
+        
+        # Add user object to the response
+        token_data['user'] = user_response
+        return token_data
     else:
         raise HTTPException(detail="Unable to validate credentials", status_code=status.HTTP_401_UNAUTHORIZED)
 

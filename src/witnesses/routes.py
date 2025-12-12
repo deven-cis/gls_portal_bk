@@ -1,12 +1,13 @@
 from typing import List, Optional
-from fastapi import APIRouter, Query, Form, File, UploadFile
+from fastapi import APIRouter, Query, Form, File, UploadFile, Depends
 from fastapi.responses import FileResponse
+from src.auth.utils import get_current_user
 
 from src.witnesses.apis import (
     list_witnesses, get_witness, create_witness, update_witness, delete_witness,
-    add_witness_video, list_witness_videos, download_witness_video, delete_witness_video
+    add_witness_video, list_witness_videos, download_witness_video, delete_witness_video, get_job_witnessee
 )
-from src.witnesses.schema import WitnessSchema, WitnessVideoSchema
+from src.witnesses.schema import WitnessSchema, WitnessVideoSchema, GetJobWitnessSchema
 
 
 witnesses_router = APIRouter(prefix='/witnesses', tags=['witnesses'])
@@ -15,6 +16,14 @@ witnesses_router = APIRouter(prefix='/witnesses', tags=['witnesses'])
 @witnesses_router.get('', response_model=List[WitnessSchema])
 async def list_witnesses_route(job_no: Optional[int] = Query(None)):
     return await list_witnesses(job_no=job_no)
+
+
+@witnesses_router.get('/get/{job_no}', response_model=List[GetJobWitnessSchema])
+async def get_job_witnesses_route(
+    job_no: int,
+    current_user: dict = Depends(get_current_user)
+):
+    return await get_job_witnessee(job_no=job_no, current_user=current_user)
 
 
 @witnesses_router.get('/{witness_id}', response_model=WitnessSchema)

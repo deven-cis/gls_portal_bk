@@ -1,19 +1,7 @@
 from typing import Optional, List
 from datetime import time, datetime
 from pydantic import BaseModel
-
-
-class WitnessVideoSchema(BaseModel):
-    id: Optional[int] = None
-    wit_no: int
-    job_no: int
-    start_time: time
-    end_time: time
-    file_name: Optional[str] = None
-    file_path: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+from src.witness_videos.schema import WitnessVideoSchema
 
 
 class WitnessVideoCreateSchema(BaseModel):
@@ -52,6 +40,9 @@ class WitnessCreateSchema(BaseModel):
     read_off_text: str
     read_off_time: time
 
+    class Config:
+        from_attributes = True
+
 
 class WitnessUpdateSchema(BaseModel):
     witness_name: Optional[str] = None
@@ -65,3 +56,20 @@ class WitnessUpdateSchema(BaseModel):
     read_off_text: Optional[str] = None
     read_off_time: Optional[time] = None
 
+    class Config:
+        from_attributes = True
+
+
+class GetJobWitnessSchema(BaseModel):
+    id: int
+    job_no: int
+    witness_name: str
+    wit_no: Optional[int] = None
+    read_on_text: str
+    read_on_time: time
+    read_off_text: str
+    read_off_time: time
+    witness_videos: Optional[List[WitnessVideoSchema]] = []
+    
+    class Config:
+        from_attributes = True

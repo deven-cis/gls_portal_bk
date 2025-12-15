@@ -31,6 +31,10 @@ class WitnessSchema(BaseModel):
         from_attributes = True
 
 
+class WitnessNameSchema(BaseModel):
+    job_no: int
+    witness_name: str
+
 class WitnessCreateSchema(BaseModel):
     job_no: int
     witness_name: str

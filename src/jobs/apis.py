@@ -1,14 +1,13 @@
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timedelta
-
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session, joinedload
 
 from src.auth.utils import get_current_user
 from src.jobs.models import Jobs
 from src.core.logger import logger
 from src.cases.models import Cases
-from src.core.database import db
+from src.core.database import get_db
 from src.core.context import get_context
 
 async def list_jobs(
@@ -22,6 +21,7 @@ async def list_jobs(
 
 async def list_jobs_by_case(
     current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
 ) -> List[Jobs]:
     """
     Return jobs for a specific case that belong to the current user.
@@ -48,6 +48,7 @@ async def list_jobs_by_case(
 
 async def list_pending_jobs(
     current_user: dict = Depends(get_current_user),
+    db=Depends(get_db)
 ) -> List[Jobs]:
     """
     Return only pending jobs (today's jobs in progress or waiting to start).
@@ -82,6 +83,7 @@ async def list_pending_jobs(
 
 async def list_upcoming_jobs(
     current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ) -> List[Jobs]:
     """
     Return only upcoming jobs (tomorrow and beyond).

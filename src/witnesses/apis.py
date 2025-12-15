@@ -3,63 +3,99 @@ from fastapi import Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from datetime import time
 from pathlib import Path
+from sqlalchemy.orm import Session
 
 from src.auth.utils import get_current_user
 from src.witnesses.models import Witnesses
+from src.cases.models import Cases
 from src.witness_videos.models import WitnessVideos
 from src.jobs.models import Jobs
 from src.core.file_utils import save_video_file
 from src.core.logger import logger
 from src.core.context import get_context
-
+from src.core.database import get_db
+from sqlalchemy.orm import Session
 
 async def list_witnesses(
     job_no: Optional[int] = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = None,
+    db: Session = Depends(get_db)
 ) -> List[Witnesses]:
     try:
-        db = Witnesses.get_session()
+        # Get user info from context first, fallback to current_user
+        user_entered_by = get_context('entered_by')
+        if not user_entered_by and current_user:
+            user_entered_by = current_user.get('entered_by')
+            
+        logger.info(f"Listing witnesses for job {job_no}, entered_by: {user_entered_by}")
+        
         query = db.query(Witnesses).filter(~Witnesses.is_archived)
         
-        if job_no:
+        if job_no is not None:
             query = query.filter(Witnesses.job_no == job_no)
+            
+        if user_entered_by:
+            query = query.filter(Witnesses.entered_by == user_entered_by)
         
         witnesses = query.all()
-        logger.info(f"Successfully retrieved {len(witnesses)} witnesses for job {job_no} entered by {user_entered_by}")
+        logger.info(f"Successfully retrieved {len(witnesses)} witnesses" + 
+                  (f" for job {job_no}" if job_no is not None else ""))
         return witnesses
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing witnesses: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=str(e)
+        )
 
 
-async def get_job_witnessee(
+async def get_job_witnesses(
     job_no: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = None,
+    db: Session = Depends(get_db)
 ) -> List[Witnesses]:
     try:
-        user_entered_by = get_context('entered_by')
-        logger.info(f"Getting witnesses for job {job_no} entered by {user_entered_by}")
-        db = Witnesses.get_session()
-        query = db.query(Witnesses).filter(
+        # Get user info from context first, fallback to current_user
+        # user_entered_by = get_context('entered_by')
+        # if not user_entered_by and current_user:
+        #     user_entered_by = current_user.get('entered_by')
+            
+        # if not user_entered_by:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_401_UNAUTHORIZED,
+        #         detail="User information not found"
+        #     )
+            
+        logger.info(f"Getting witnesses for job {job_no}")
+        
+        witnesses = db.query(Witnesses).filter(
             Witnesses.job_no == job_no,
-            Witnesses.entered_by == user_entered_by,
             ~Witnesses.is_archived
-        )
-        witnesses = query.all()
-        logger.info(f"Successfully retrieved {len(witnesses)} witnesses for job {job_no} entered by {user_entered_by}")
+            # Witnesses.entered_by == user_entered_by,
+        ).all()
+        
+        logger.info(f"Successfully retrieved {len(witnesses)} witnesses for job {job_no}")
         return witnesses
+        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting witnesses for job {job_no}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 async def get_witness(
     witness_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = None,
+    db: Session = Depends(get_db)
 ) -> Witnesses:
     try:
         user_entered_by = get_context('entered_by')
-        db = Witnesses.get_session()
+        logger.info(f"Getting witness {witness_id} entered by {user_entered_by}")
         witness = db.query(Witnesses).filter(
             Witnesses.id == witness_id,
             Witnesses.entered_by == user_entered_by,
@@ -79,6 +115,45 @@ async def get_witness(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
+async def create_witness_name(
+    job_no: int = Form(...),
+    witness_name: str = Form(...),
+    db: Session = Depends(get_db)
+) -> Witnesses:
+    try:
+        user_entered_by = get_context('entered_by')
+        job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
+        case_info = db.query(Cases).filter(Cases.case_no == job.case_no).first()
+        logger.info(f"Creating witness name for job {job_no}, entered by {case_info}")
+        if not job:
+            raise HTTPException(    
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Job with job_no {job_no} not found"
+            )
+
+        read_context = {
+            "read_on_text": f"We are now on the record at [Time] on [Date]. This is the [Type] deposition of {witness_name} in the matter of {case_info.case_short_name} case number {case_info.case_number}",
+            "read_off_text": f"We are now off the record at [Time]. This concludes the deposition of {witness_name}"
+        }      
+        
+        witness = Witnesses(
+            job_no=job_no,
+            witness_name=witness_name,
+            read_on_text=read_context['read_on_text'],
+            read_off_text=read_context['read_off_text'],
+        )
+        
+        witness.save()
+        logger.info(f"Successfully created witness {witness.id} - {witness_name}")
+        return witness
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating witness: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+
 async def create_witness(
     job_no: int = Form(...),
     witness_name: str = Form(...),
@@ -87,10 +162,10 @@ async def create_witness(
     read_on_time: str = Form(...),
     read_off_text: str = Form(...),
     read_off_time: str = Form(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = None,
+    db: Session = Depends(get_db)
 ) -> Witnesses:
     try:
-        db = Witnesses.get_session()
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
             raise HTTPException(
@@ -148,6 +223,7 @@ async def update_witness(
     read_off_text: Optional[str] = Form(None),
     read_off_time: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
+    db = Depends(get_db)
 ) -> Witnesses:
     try:
         # Get witness
@@ -234,10 +310,9 @@ async def add_witness_video(
     video: UploadFile = File(...),
     chunk_number: Optional[int] = Form(None),
     upload_id: Optional[str] = Form(None),
-    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ) -> WitnessVideos:
     try:
-        db = Witnesses.get_session()
         witness = db.query(Witnesses).filter(
             Witnesses.id == witness_id,
             ~Witnesses.is_archived

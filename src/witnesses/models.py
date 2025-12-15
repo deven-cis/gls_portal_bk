@@ -1,3 +1,4 @@
+from datetime import time
 from sqlalchemy import Column, DateTime, ForeignKey, Time, Integer, String, Text
 
 from src.core.models import Base
@@ -21,7 +22,15 @@ class Witnesses(Base):
     job = relationship("Jobs", back_populates="witnesses")
 
     witness_vid = relationship(
-        "WitnessVideos",
-        back_populates="witness",
-        cascade="all, delete-orphan"
-    )
+            "WitnessVideos",
+            back_populates="witness",
+            cascade="all, delete-orphan"
+        )
+
+    def __init__(self, **kwargs):
+        # Set defaults for required fields if not provided
+        if 'read_on_time' not in kwargs:
+            kwargs['read_on_time'] = time(0, 0, 0)
+        if 'read_off_time' not in kwargs:
+            kwargs['read_off_time'] = time(0, 0, 0)
+        super().__init__(**kwargs)

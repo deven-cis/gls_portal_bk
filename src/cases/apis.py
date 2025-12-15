@@ -9,13 +9,15 @@ from src.core.logger import logger
 from src.core.context import get_context
 from fastapi import HTTPException, status
 from src.cases.schema import CaseEditSchema
+from src.core.database import get_db
 
 async def list_cases(
     current_user: dict = Depends(get_current_user),
 ) -> List[Cases]:
     
-    logger.info(f'Listing cases for user: {current_user.get("id")}')
+    logger.info(f'Listing cases for user: {current_user.get("entered_by")}')
     user_info = get_context('entered_by')
+    logger.info(f'User info: {user_info}')
     result = Cases.fetch_records({"entered_by": user_info})
     return result
 
@@ -30,8 +32,9 @@ async def get_case(case_id: int, current_user: dict = Depends(get_current_user))
 def edit_case(
     case_id: int, 
     case_data: CaseEditSchema, 
-    current_user: dict = Depends(get_current_user)
-) -> dict:
+    current_user: dict = Depends(get_current_user),
+    db = Depends(get_db)
+    ) -> dict:
     try:
         case = Cases.get(case_id)
         if not case or case.is_archived:

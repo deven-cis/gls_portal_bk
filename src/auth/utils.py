@@ -134,21 +134,9 @@ def decode_token(token: str, token_type: str = None):
         )
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
-    """
-    Get Current Authenticated User
-    
-    Args:
-        credentials: HTTP Authorization credentials containing the JWT token
-        db: Database session
-        
-    Returns:
-        dict: Decoded token data with user information
-        
-    Raises:
-        HTTPException: If token is invalid, expired, or user not found
-    """
     try:
         # Decode the token (this validates the signature and expiration)
+        set_context(db=db)
         decoded_data = decode_token(credentials.credentials)
         
         # Get user from database
@@ -172,7 +160,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         set_context(login_name=user.login_name)
         set_context(user_id=user.id)
         set_context(entered_by=user.entered_by)
-        set_context(db=db)
+        
         
         # Clean up token data before returning
         decoded_data.pop('exp', None)  # Remove JWT expiration timestamp

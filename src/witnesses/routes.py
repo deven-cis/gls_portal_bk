@@ -7,7 +7,8 @@ from src.witnesses.apis import (
     list_witnesses, get_witness, create_witness, update_witness, delete_witness,
     add_witness_video, list_witness_videos, download_witness_video, delete_witness_video, get_job_witnesses, create_witness_name
 )
-from src.witnesses.schema import WitnessSchema, WitnessVideoSchema, GetJobWitnessSchema, WitnessNameSchema
+from src.witnesses.schema import WitnessSchema, WitnessVideoSchema, GetJobWitnessSchema, WitnessNameSchema, CreateWitnessFrontSchema, WitnessUpdateResponseSchema, WitnessUpdateSchema
+from src.witnesses.utils import get_witness_update_data_from_request
 from src.core.database import get_db
 from sqlalchemy.orm import Session
 
@@ -39,13 +40,11 @@ async def get_witness_route(witness_id: int, db = Depends(get_db)):
 
 @witnesses_router.post('/create-name', response_model=WitnessNameSchema, status_code=201)
 async def create_witness_name_route(
-    job_no: int = Form(...),
-    witness_name: str = Form(...),
+    payload: CreateWitnessFrontSchema,
     db: Session = Depends(get_db)
 ):
     return await create_witness_name(
-        job_no=job_no,
-        witness_name=witness_name,
+        data=payload,
         db=db
     )
 
@@ -73,33 +72,18 @@ async def create_witness_route(
     )
 
 
-@witnesses_router.put('/{witness_id}', response_model=WitnessSchema)
+@witnesses_router.put('/{witness_id}', response_model=WitnessUpdateResponseSchema, status_code=200)
 async def update_witness_route(
     witness_id: int,
-    witness_name: Optional[str] = Form(None),
-    witness_email: Optional[str] = Form(None),
-    actual_start_time: Optional[str] = Form(None),
-    actual_end_time: Optional[str] = Form(None),
-    read_sign_date: Optional[str] = Form(None),
-    read_sign_to: Optional[int] = Form(None),
-    read_on_text: Optional[str] = Form(None),
-    read_on_time: Optional[str] = Form(None),
-    read_off_text: Optional[str] = Form(None),
-    read_off_time: Optional[str] = Form(None),
+    update_data: WitnessUpdateSchema = Depends(get_witness_update_data_from_request),
     db: Session = Depends(get_db)
 ):
+    """
+    Update witness. Form field types are defined in WitnessUpdateSchema to avoid repetition.
+    """
     return await update_witness(
         witness_id=witness_id,
-        witness_name=witness_name,
-        witness_email=witness_email,
-        actual_start_time=actual_start_time,
-        actual_end_time=actual_end_time,
-        read_sign_date=read_sign_date,
-        read_sign_to=read_sign_to,
-        read_on_text=read_on_text,
-        read_on_time=read_on_time,
-        read_off_text=read_off_text,
-        read_off_time=read_off_time,
+        update_data=update_data,
         db=db
     )
 

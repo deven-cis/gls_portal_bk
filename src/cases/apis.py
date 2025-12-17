@@ -21,8 +21,9 @@ async def list_cases(
     result = Cases.fetch_records({"entered_by": user_info})
     return result
 
-async def get_case(case_id: int, current_user: dict = Depends(get_current_user)) -> Cases:
-    case = Cases.get(case_id)
+async def get_case(case_id: int, current_user: dict = Depends(get_current_user), db= Depends(get_db)) -> Cases:
+    logger.info(f"Retrieving case {case_id}")
+    case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
     logger.info(f"Case {case} fetched successfully")
     if not case:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")

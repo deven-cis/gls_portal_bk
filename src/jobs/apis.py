@@ -83,7 +83,7 @@ async def list_pending_jobs(
 
 async def list_upcoming_jobs(
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db=Depends(get_db)
 ) -> List[Jobs]:
     """
     Return only upcoming jobs (tomorrow and beyond).

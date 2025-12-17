@@ -61,7 +61,8 @@ class Base:
         """
         Fetch the record by id
         """
-        return cls.get_queryset().filter(cls.id == id).first()
+        query = cls.get_queryset()
+        return query.filter(cls.id == id).first()
 
     @classmethod
     def fetch_records(

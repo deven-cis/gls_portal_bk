@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from datetime import time
@@ -15,6 +15,8 @@ from src.core.logger import logger
 from src.core.context import get_context
 from src.core.database import get_db
 from sqlalchemy.orm import Session
+from src.witnesses.schema import CreateWitnessFrontSchema, WitnessUpdateSchema
+from datetime import datetime
 
 async def list_witnesses(
     job_no: Optional[int] = None,
@@ -116,43 +118,41 @@ async def get_witness(
 
 
 async def create_witness_name(
-    job_no: int = Form(...),
-    witness_name: str = Form(...),
+    data: CreateWitnessFrontSchema,
     db: Session = Depends(get_db)
 ) -> Witnesses:
     try:
         user_entered_by = get_context('entered_by')
-        job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
-        case_info = db.query(Cases).filter(Cases.case_no == job.case_no).first()
-        logger.info(f"Creating witness name for job {job_no}, entered by {case_info}")
+        logger.info(f"Creating witness name payload: {data}")
+
+        job = db.query(Jobs).filter(Jobs.job_no == data.job_no).first()
         if not job:
             raise HTTPException(    
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Job with job_no {job_no} not found"
             )
 
+        case_info = db.query(Cases).filter(Cases.case_no == job.case_no).first()
+
         read_context = {
-            "read_on_text": f"We are now on the record at [Time] on [Date]. This is the [Type] deposition of {witness_name} in the matter of {case_info.case_short_name} case number {case_info.case_number}",
-            "read_off_text": f"We are now off the record at [Time]. This concludes the deposition of {witness_name}"
-        }      
+            "read_on_text": f"We are now on the record at [Time] on [Date]. This is the [Type] deposition of {data.witness_name} in the matter of {case_info.case_short_name} case number {case_info.case_number}",
+            "read_off_text": f"We are now off the record at [Time]. This concludes the deposition of {data.witness_name}"
+        }
         
         witness = Witnesses(
-            job_no=job_no,
-            witness_name=witness_name,
+            job_no=data.job_no,
+            witness_name=data.witness_name,
             read_on_text=read_context['read_on_text'],
             read_off_text=read_context['read_off_text'],
         )
         
         witness.save()
-        logger.info(f"Successfully created witness {witness.id} - {witness_name}")
-        return witness
-    except HTTPException:
-        raise
+        
+        return witness    
+
     except Exception as e:
         logger.error(f"Error creating witness: {str(e)}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
 
 async def create_witness(
     job_no: int = Form(...),
@@ -196,85 +196,103 @@ async def create_witness(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-def parse_time(value: str) -> time:
-    """Parse time string to time object."""
+def _parse_time_internal(value: str) -> Optional[time]:
+    """
+    Internal time parsing function.
+    Returns None if value is invalid or empty.
+    """
+    # Handle None or non-string values
+    if value is None:
+        return None
+    
+    if not isinstance(value, str):
+        try:
+            value = str(value)
+        except:
+            return None
+    
+    # Strip whitespace
+    value = value.strip()
+    
+    # Return None for empty strings
+    if not value:
+        return None
+    
+    # Early check for common invalid placeholders (case-insensitive)
+    # This catches "string", "null", etc. before any processing
+    invalid_values = ['string', 'null', 'none', '--:--', 'undefined', 'nan', 'none', 'null', '']
+    value_lower = value.lower()
+    if value_lower in invalid_values:
+        return None
+    
+    # Additional check: if it contains only letters (no digits), it's invalid
+    # Valid formats: HH:MM:SS, HH:MM, or just numbers
+    if not any(c.isdigit() for c in value):
+        return None
+    
+    # Additional safety: if it's a common word that's not a time, reject it
+    if value_lower in ['string', 'time', 'date', 'datetime']:
+        return None
+    
+    # Handle single digit hour (0-23)
     if value.isdigit() and len(value) <= 2:
-        hour = int(value)
-        if 0 <= hour <= 23:
-            return time(hour, 0, 0)
-        raise ValueError(f"Hour must be 0-23")
+        try:
+            hour = int(value)
+            if 0 <= hour <= 23:
+                return time(hour, 0, 0)
+        except:
+            return None
+        return None
     
+    # Handle HH:MM format (add seconds if missing)
     if value.count(':') == 1:
-        value += ':00'
+        # Validate format before adding seconds
+        parts = value.split(':')
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            value += ':00'
+        else:
+            return None
     
-    return time.fromisoformat(value)
+    # Validate that it looks like a time format before parsing
+    # Should be in format HH:MM:SS or HH:MM
+    if ':' in value:
+        parts = value.split(':')
+        if len(parts) not in [2, 3]:
+            return None
+        # Check all parts are digits
+        if not all(part.isdigit() for part in parts):
+            return None
+    
+    # Try to parse ISO format - this is the only place that might raise ValueError
+    try:
+        return time.fromisoformat(value)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def parse_time(value: str) -> Optional[time]:
+    """
+    Parse time string to time object.
+    Returns None if value is invalid or empty.
+    NEVER raises exceptions - always returns None for invalid input.
+    This is a safe wrapper that guarantees no exceptions.
+    """
+    try:
+        return _parse_time_internal(value)
+    except Exception as e:
+        # Absolute safety net - catch ANY exception and return None
+        logger.debug(f"Unexpected error in parse_time for value '{value}': {str(e)}")
+        return None
 
 
 async def update_witness(
     witness_id: int,
-    witness_name: Optional[str] = Form(None),
-    witness_email: Optional[str] = Form(None),
-    actual_start_time: Optional[str] = Form(None),
-    actual_end_time: Optional[str] = Form(None),
-    read_sign_date: Optional[str] = Form(None),
-    read_sign_to: Optional[int] = Form(None),
-    read_on_text: Optional[str] = Form(None),
-    read_on_time: Optional[str] = Form(None),
-    read_off_text: Optional[str] = Form(None),
-    read_off_time: Optional[str] = Form(None),
+    update_data: WitnessUpdateSchema,
     current_user: dict = Depends(get_current_user),
     db = Depends(get_db)
-) -> Witnesses:
+) -> dict:
     try:
-        # Get witness
-        witness = Witnesses.get(witness_id)
-        if not witness or witness.is_archived:
-            raise HTTPException(404, "Witness not found")
-        
-        # Update fields
-        if witness_name is not None:
-            witness.witness_name = witness_name
-        if witness_email is not None:
-            witness.witness_email = witness_email
-        if read_sign_date is not None:
-            witness.read_sign_date = read_sign_date
-        if read_sign_to is not None:
-            witness.read_sign_to = read_sign_to
-        if read_on_text is not None:
-            witness.read_on_text = read_on_text
-        if read_off_text is not None:
-            witness.read_off_text = read_off_text
-        
-        # Update time fields
-        if actual_start_time:
-            witness.actual_start_time = parse_time(actual_start_time)
-        if actual_end_time:
-            witness.actual_end_time = parse_time(actual_end_time)
-        if read_on_time:
-            witness.read_on_time = parse_time(read_on_time)
-        if read_off_time:
-            witness.read_off_time = parse_time(read_off_time)
-        
-        # Save (handles last_modified_at and last_modified_by)
-        witness.save()
-        
-        logger.info(f"Updated witness {witness_id}")
-        return witness
-        
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(400, f"Invalid time format: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error updating witness {witness_id}: {str(e)}", exc_info=True)
-        raise HTTPException(500, "Failed to update witness")
-
-async def delete_witness(
-    witness_id: int,
-    current_user: dict = Depends(get_current_user),
-) -> None:
-    try:
-        db = Witnesses.get_session()
+        # Get witness from database
         witness = db.query(Witnesses).filter(
             Witnesses.id == witness_id,
             ~Witnesses.is_archived
@@ -283,17 +301,179 @@ async def delete_witness(
         if not witness:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
+                detail="Witness not found"
+            )
+        
+        # Track if any field was updated
+        fields_updated = []
+        
+        # Get only fields that were provided (exclude unset, but include None and empty strings to handle clearing)
+        update_dict = update_data.model_dump(exclude_unset=True)
+        logger.info(f"Update dictionary: {update_dict}")
+        # Update fields only if provided (not None)
+        if "witness_name" in update_dict:
+            witness_name = update_dict["witness_name"]
+            if isinstance(witness_name, str) and witness_name.strip():
+                witness.witness_name = witness_name.strip()
+                fields_updated.append("witness_name")
+            elif witness_name == "":
+                witness.witness_name = ""
+                fields_updated.append("witness_name")
+        
+        if "witness_email" in update_dict:
+            witness_email = update_dict["witness_email"]
+            witness.witness_email = witness_email.strip() if isinstance(witness_email, str) else witness_email
+            fields_updated.append("witness_email")
+        
+        if "read_sign_date" in update_dict:
+            witness.read_sign_date = update_dict["read_sign_date"]
+            fields_updated.append("read_sign_date")
+        
+        if "read_sign_to" in update_dict:
+            witness.read_sign_to = update_dict["read_sign_to"]
+            fields_updated.append("read_sign_to")
+        
+        if "read_on_text" in update_dict:
+            read_on_text = update_dict["read_on_text"]
+            if isinstance(read_on_text, str) and read_on_text.strip():
+                witness.read_on_text = read_on_text.strip()
+                fields_updated.append("read_on_text")
+            elif read_on_text == "":
+                witness.read_on_text = ""
+                fields_updated.append("read_on_text")
+        
+        if "read_off_text" in update_dict:
+            read_off_text = update_dict["read_off_text"]
+            if isinstance(read_off_text, str) and read_off_text.strip():
+                witness.read_off_text = read_off_text.strip()
+                fields_updated.append("read_off_text")
+            elif read_off_text == "":
+                witness.read_off_text = ""
+                fields_updated.append("read_off_text")
+        
+        # Update time fields - only update if valid value provided, otherwise preserve existing
+        if "actual_start_time" in update_dict:
+            actual_start_time = update_dict["actual_start_time"]
+            try:
+                parsed_time = parse_time(actual_start_time) if actual_start_time else None
+                # Only update if we got a valid parsed time, or if explicitly set to None/empty
+                if parsed_time is not None:
+                    witness.actual_start_time = parsed_time
+                    fields_updated.append("actual_start_time")
+                elif actual_start_time == "" or actual_start_time is None:
+                    # Explicitly clearing the field
+                    witness.actual_start_time = None
+                    fields_updated.append("actual_start_time")
+                # If parse_time returned None due to invalid format, skip update (preserve existing)
+            except Exception as e:
+                logger.warning(f"Error parsing actual_start_time '{actual_start_time}': {str(e)}. Preserving existing value.")
+                # Preserve existing value on any error
+        
+        if "actual_end_time" in update_dict:
+            actual_end_time = update_dict["actual_end_time"]
+            try:
+                parsed_time = parse_time(actual_end_time) if actual_end_time else None
+                if parsed_time is not None:
+                    witness.actual_end_time = parsed_time
+                    fields_updated.append("actual_end_time")
+                elif actual_end_time == "" or actual_end_time is None:
+                    witness.actual_end_time = None
+                    fields_updated.append("actual_end_time")
+            except Exception as e:
+                logger.warning(f"Error parsing actual_end_time '{actual_end_time}': {str(e)}. Preserving existing value.")
+        
+        if "read_on_time" in update_dict:
+            read_on_time = update_dict["read_on_time"]
+            try:
+                parsed_time = parse_time(read_on_time) if read_on_time else None
+                if parsed_time is not None:
+                    witness.read_on_time = parsed_time
+                    fields_updated.append("read_on_time")
+                elif read_on_time == "" or read_on_time is None:
+                    # For required fields, set default if explicitly cleared
+                    witness.read_on_time = time(0, 0, 0)
+                    fields_updated.append("read_on_time")
+                # If invalid format, preserve existing value
+            except Exception as e:
+                logger.warning(f"Error parsing read_on_time '{read_on_time}': {str(e)}. Preserving existing value.")
+        
+        if "read_off_time" in update_dict:
+            read_off_time = update_dict["read_off_time"]
+            try:
+                parsed_time = parse_time(read_off_time) if read_off_time else None
+                if parsed_time is not None:
+                    witness.read_off_time = parsed_time
+                    fields_updated.append("read_off_time")
+                elif read_off_time == "" or read_off_time is None:
+                    # For required fields, set default if explicitly cleared
+                    witness.read_off_time = time(0, 0, 0)
+                    fields_updated.append("read_off_time")
+                # If invalid format, preserve existing value
+            except Exception as e:
+                logger.warning(f"Error parsing read_off_time '{read_off_time}': {str(e)}. Preserving existing value.")
+        
+        # Save (handles last_modified_at and last_modified_by, commit and refresh)
+        witness.save()
+        
+        # Prepare response message
+        if fields_updated:
+            message = f"Witness updated successfully. Fields updated: {', '.join(fields_updated)}"
+        else:
+            message = "No changes provided. Witness data remains unchanged."
+        
+        logger.info(f"Updated witness {witness_id}. Fields updated: {fields_updated}")
+        
+        # Return structured response
+        return {
+            "status_code": status.HTTP_200_OK,
+            "result": witness,
+            "message": message
+        }
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # This should rarely happen now since parse_time handles errors gracefully
+        # But keep it for other potential ValueError cases
+        error_msg = str(e)
+        if "isoformat" in error_msg.lower() or "time" in error_msg.lower():
+            logger.warning(f"Time parsing error (should be handled by parse_time): {error_msg}")
+            # Don't raise error, just log and return unchanged data
+            return {
+                "status_code": status.HTTP_200_OK,
+                "result": witness,
+                "message": "Update completed. Some invalid time values were ignored and existing values preserved."
+            }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid input: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error updating witness {witness_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update witness"
+        )
+
+
+
+async def delete_witness(
+    witness_id: int,
+) -> None:
+    try:
+        witness = Witnesses.get_queryset().get(
+            id=witness_id,
+            is_archived=False
+        )
+        
+        if not witness:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Witness with ID {witness_id} not found"
             )
         
-        witness.is_archived = True
-        from src.core.context import get_context
-        from datetime import datetime
-        entered_by = get_context('entered_by') or 0
-        witness.last_modified_at = datetime.now()
-        witness.last_modified_by = entered_by
-        
-        db.commit()
+        witness.is_archived = True  
+        witness.save()
         logger.info(f"Successfully deleted witness {witness_id}")
     except HTTPException:
         raise

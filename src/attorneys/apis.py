@@ -2,12 +2,14 @@ from typing import List, Optional
 from fastapi import Depends, HTTPException, status, UploadFile, File, Form, APIRouter, Request
 from fastapi.responses import JSONResponse
 from pathlib import Path
+from sqlalchemy.orm import Session
 from src.auth.utils import get_current_user
 from src.attorneys.models import Attorneys
 from src.jobs.models import Jobs
 from src.core.file_utils import save_file
 from src.attorneys.schema import AttorneySchema
 from src.core.logger import logger
+from src.core.database import get_db
 
 attorneys_router = APIRouter(prefix='/attorneys', tags=['attorneys'])
 
@@ -16,10 +18,10 @@ attorneys_router = APIRouter(prefix='/attorneys', tags=['attorneys'])
 async def list_attorneys_by_job(
     job_no: int,
     current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> dict:
-   
     try:
-        attorneys = Attorneys.get_queryset().filter(
+        attorneys = db.query(Attorneys).filter(
             Attorneys.job_no == job_no,
             Attorneys.is_archived == False
         ).all()
@@ -37,6 +39,7 @@ async def list_attorneys_by_job(
             status_code=status.HTTP_200_OK
         )
     except Exception as e:
+        logger.error(f"Error getting attorneys for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -254,49 +257,44 @@ async def update_attorney(
         )
 
 
-async def upload_attorney_file(
-    attorney_id: int,
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-) -> Attorneys:
-    try:
-        db = Attorneys.get_session()
-        attorney = db.query(Attorneys).filter(Attorneys.id == attorney_id).first()
-        
-        if not attorney or attorney.is_archived:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Attorney with ID {attorney_id} not found"
-            )
-        
-        file_name, file_name_path = await save_file(file, "attorneys")
-        attorney.file_name = file_name
-        attorney.file_name_path = file_name_path
-        
-        db.commit()
-        db.refresh(attorney)
-        return attorney
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
+@attorneys_router.delete('/delete/{attorney_id}', status_code=200)
 async def delete_attorney(
     attorney_id: int,
     current_user: dict = Depends(get_current_user),
-) -> None:
+) -> dict:
     try:
-        attorney = Attorneys.get(attorney_id)
-        if not attorney or attorney.is_archived:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Attorney with ID {attorney_id} not found"
+        attorney = Attorneys.get_queryset().filter(Attorneys.id == attorney_id, Attorneys.is_archived == False).first()
+        if not attorney:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": f"Attorney with ID {attorney_id} not found",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
             )
         
         attorney.is_archived = True
-        Attorneys.save(attorney)
-    except HTTPException:
-        raise
+        attorney.save()   
+        logger.info(f"Successfully deleted attorney {attorney_id}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": f"Attorney with ID {attorney_id} deleted successfully",
+                "success": True,
+                "result": {}
+            },
+            status_code=status.HTTP_200_OK
+        )
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.error(f"Error deleting attorney {attorney_id}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to delete attorney: {str(e)}",
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

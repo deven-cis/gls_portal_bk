@@ -11,7 +11,7 @@ class EquipmentTime(Base):
     laptop_used = Column(Boolean, default=False)
     pip_used = Column(Boolean, default=False)
     exhibit_tech = Column(Boolean, default=False)
-    parking_cost = Column(Numeric(10, 2), default=Decimal('0.00'), server_default='0.00')
+    parking_cost = Column[Decimal](Numeric(10, 2), default=Decimal('0.00'), server_default='0.00')
     time_after = Column(Time, nullable=True)
 
     # Define the relationship to the Jobs model

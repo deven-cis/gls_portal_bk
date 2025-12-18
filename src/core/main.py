@@ -13,7 +13,7 @@ from src.attorneys.routes import attorneys_router
 from src.billings.routes import billings_router
 from src.equipment_time.routes import equipment_time_router
 from src.additional_documents.routes import additional_documents_router
-from src.witnesses.routes import witnesses_router
+from src.witnesses.routes import witnesses_api
 from src.core.relationships import init_relationships
 
 
@@ -56,7 +56,7 @@ app.include_router(
 )
 
 app.include_router(
-    witnesses_router,
+    witnesses_api,
     tags=['witnesses']
 
 )

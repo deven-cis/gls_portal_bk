@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Text, Time, Integer
+from sqlalchemy import Column, ForeignKey, Text, Time, Integer, String
 from sqlalchemy.orm import relationship
 
 from src.core.models import Base
@@ -10,8 +10,8 @@ class WitnessVideos(Base):
 
     wit_no = Column(Integer, ForeignKey("witnesses.id", ondelete="CASCADE"), nullable=False)
     job_no = Column(Integer, ForeignKey("jobs.job_no"), nullable=False)
-    start_time = Column(Time, nullable=False)
-    end_time = Column(Time, nullable=False)
+    start_time = Column(String(255), nullable=True)
+    end_time = Column(String(255), nullable=True)
     file_name = Column(Text, nullable=True)
     file_path = Column(Text, nullable=True)
 

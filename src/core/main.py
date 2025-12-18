@@ -3,6 +3,7 @@ Main File of FastAPI application
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # from src.users.routes import user_router
 from src.auth.routes import auth_router
@@ -15,12 +16,16 @@ from src.equipment_time.routes import equipment_time_router
 from src.additional_documents.routes import additional_documents_router
 from src.witnesses.routes import witnesses_api
 from src.core.relationships import init_relationships
-
+from src.users.apis import users_router
 
 app = FastAPI(
     title=config.APPLICATION_NAME,
     version=config.APPLICATION_VERSION
 )
+
+# Serve uploaded files (profile pictures, witness videos, docs, etc.)
+# This enables URLs like: http://127.0.0.1:8000/uploads/...
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Configure CORS
 app.add_middleware(
@@ -43,6 +48,11 @@ app.include_router(
     auth_router,
     prefix="/api",
     tags=["authentication"]
+)
+
+app.include_router(
+    users_router,
+    tags=["users"]
 )
 
 app.include_router(

@@ -16,30 +16,39 @@ from src.users.utils import hash_password
 from src.auth.schema import PasswordResetSchema, PasswordChangeSchema, LogoutResponseSchema
 from src.users.models import Users
 from fastapi import Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials 
+from fastapi.responses import JSONResponse
 
 
 async def login_user(data: LoginCredentialSchema):
     try:
-        logger.info(f'Login attempt for user: {data.login_name}')
+        # Avoid logging login_name (PII)
+        logger.info("Login attempt")
         
         # Find user by login name
         users = Users.fetch_records({"login_name": data.login_name})
         if not users:
-            logger.warning(f'User not found: {data.login_name}')
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+            # NOTE: return HTTP 200 to avoid frontend refresh-token flow on login failures.
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                    "success": False,
+                    "result": {"message": "Wrong Email Address"},
+                },
+                status_code=status.HTTP_200_OK,
             )
             
         user_obj = users[0]
         
         # Verify password
         if not verify_password(data.login_password, user_obj.login_password):
-            logger.warning(f'Invalid password for user: {data.login_name}')
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                    "success": False,
+                    "result": {"message": "Invalid password"},
+                },
+                status_code=status.HTTP_200_OK,
             )
         
         # Create tokens
@@ -69,18 +78,28 @@ async def login_user(data: LoginCredentialSchema):
             'user': user_response
         }
         
-        logger.info(f'User {user_obj.login_name} logged in successfully')
-        return response
+        logger.info("Login success")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "success": True,
+                "result": response
+            },
+            status_code=status.HTTP_200_OK,
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f'Login error for user {data.login_name}: {str(e)}')
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during login"
+        logger.error('Login error: %s', str(e), exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "success": False,
+                "result": {"message": "An error occurred during login"},
+            },
+            status_code=status.HTTP_200_OK,
         )
-
 
 async def refresh_token(refresh_token: str):
     """

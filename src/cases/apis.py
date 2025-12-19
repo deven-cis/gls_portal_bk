@@ -27,7 +27,7 @@ async def list_cases(
             "status_code": status.HTTP_200_OK,
             "message": f"Found {len(result)} case(s)",
             "success": True,
-            "result": [CaseSchema.model_validate(case) for case in result]
+            "result": [CaseSchema.model_validate(case).model_dump(mode="json") for case in result]
         },
         status_code=status.HTTP_200_OK
     )

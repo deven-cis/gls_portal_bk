@@ -14,6 +14,8 @@ from src.core.file_utils import save_image_file
 from src.core.logger import logger
 from src.users.models import Users
 from src.users.schema import UserResponseSchema
+from src.users.utils import hash_password, verify_password
+from src.auth.schema import PasswordChangeSchema
 
 
 
@@ -185,6 +187,85 @@ async def remove_profile_picture(
                 "result": {"message": "Failed to remove profile picture"},
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+@users_router.post("/change-password", status_code=200)
+async def change_password(
+    schema: PasswordChangeSchema,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """
+    Change Password API
+    """
+    try:
+        user_id = current_user.get("id") or current_user.get("user_id") or get_context("user_id")
+        if not user_id:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                    "success": False,
+                    "result": {"message": "Not authenticated"},
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+        # Use user_id from token if not provided in schema, or validate schema user_id matches token
+        if schema.user_id != int(user_id):
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "success": False,
+                    "result": {"message": "You can only change your own password"},
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+        user = Users.get(schema.user_id)
+ 
+        if not user:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "success": False,
+                    "result": {"message": "User not found"},
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        
+        if not verify_password(schema.old_password, user.login_password):
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "success": False,
+                    "result": {"message": "Old password is incorrect"},
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        
+        user.login_password = hash_password(schema.new_password)
+        user.require_password_change = False
+        user.save()
+ 
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "success": True,
+                "result": {"message": "Password changed successfully"},
+            },
+            status_code=status.HTTP_200_OK,
+        )
+ 
+    except Exception as e:
+        logger.error(f"Error changing password: {str(e)}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "success": False,
+                "result": {"message": "Error changing password"},
+            },
+            status_code=status.HTTP_200_OK,
         )
 
 

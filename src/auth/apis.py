@@ -13,7 +13,7 @@ from src.core.utils import send_email
 from src.core.config import config
 from src.auth.utils import create_forget_password_token, verify_token
 from src.users.utils import hash_password
-from src.auth.schema import PasswordResetSchema, PasswordChangeSchema, LogoutResponseSchema
+from src.auth.schema import PasswordResetSchema, LogoutResponseSchema
 from src.users.models import Users
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials 
@@ -191,30 +191,4 @@ async def reset_password(
         logger.error(f"Error resetting password: {str(e)}")
         raise HTTPException(detail="Invalid or expired token", status_code=status.HTTP_403_FORBIDDEN)
     
- 
-async def change_password(
-    schema: PasswordChangeSchema
-):
-    """
-    Change Password API
-    """
-    try:
-        user = Users.get(schema.user_id)
- 
-        if not user:
-            raise HTTPException(detail="User not found", status_code=status.HTTP_404_NOT_FOUND)
-        
-        if not verify_password(schema.old_password, user.login_password):
-            raise HTTPException(detail="Old password is incorrect", status_code=status.HTTP_400_BAD_REQUEST)
-        
-        user.login_password = hash_password(schema.new_password)
-        user.require_password_change = False
-        user.save()
- 
-        return {"message": "Password changed successfully", "success": True}
- 
-    except Exception as e:
-        logger.error(f"Error changing password: {str(e)}")
-        raise HTTPException(detail="Error changing password", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
- 
  

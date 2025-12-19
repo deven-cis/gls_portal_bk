@@ -14,6 +14,7 @@ class Billings(Base):
     billing_notes = Column(Text, nullable=True)
     videographer_hours_present = Column(String(255), nullable=True)
     file_hours_length = Column(String(255), nullable=True)
+    mark_is_done = Column(Boolean, default=False)
 
     # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="billing")

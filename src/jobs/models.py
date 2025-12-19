@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger, ForeignKey
+from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger, ForeignKey, Boolean
 from sqlalchemy.types import Text
 from sqlalchemy.orm import relationship
 from src.core.models import Base
@@ -21,8 +21,9 @@ class CancelReasonEnum(enum.Enum):
 
 class JobStatusEnum(enum.Enum):
     UPCOMING = "upcoming"
+    SCHEDULED = "scheduled"
     SESSION_NOT_STARTED = "session_not_started"
-    SESSION_IN_PROGRESS = "session_in_progress"
+    SESSION_IN_PROGRESS = "session_started"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
 
@@ -55,6 +56,13 @@ class Jobs(Base):
         nullable=True
     )
     computed_status = Column(String(50), nullable=True, default="upcoming")
+    actual_session_start_time = Column(DateTime, nullable=True)  
+    actual_session_end_time = Column(DateTime, nullable=True)    
+    session_duration = Column(String(8), nullable=True)  # HH:MM:SS format
+    session_completed = Column(Boolean, default=False)
+    mark_is_done = Column(Boolean, default=False)
+    video_upload_deadline = Column(DateTime, nullable=True)
+    expected_video_count = Column(Integer, nullable=True)
 
     # Many-to-one: each job belongs to a single case
     # Using string reference to avoid circular imports

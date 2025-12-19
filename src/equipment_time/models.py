@@ -13,6 +13,7 @@ class EquipmentTime(Base):
     exhibit_tech = Column(Boolean, default=False)
     parking_cost = Column[Decimal](Numeric(10, 2), default=Decimal('0.00'), server_default='0.00')
     time_after = Column(Time, nullable=True)
+    mark_is_done = Column(Boolean, default=False)
 
     # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="equipment_time")

@@ -36,3 +36,7 @@ SETUP_COMPLETE.md
 *.pid
 *.swp
 *~
+
+#cursor
+.cursor/
+.qodobot/

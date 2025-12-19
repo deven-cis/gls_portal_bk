@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Time, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Time, Integer, String, Text, Boolean
 
 from src.core.models import Base
 from sqlalchemy.orm import relationship
@@ -17,6 +17,7 @@ class Witnesses(Base):
     read_on_time = Column(String(255), nullable=True)
     read_off_text = Column(Text, nullable=False)
     read_off_time = Column(String(255), nullable=True)
+    mark_is_done = Column(Boolean, default=False)
 
     job = relationship("Jobs", back_populates="witnesses")
 

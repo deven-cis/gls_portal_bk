@@ -13,6 +13,7 @@ class Attorneys(Base):
     order_details = Column(Text, nullable=False)
     file_name = Column(Text, nullable=True)
     file_name_path = Column(Text, nullable=True)
+    mark_is_done = Column(Boolean, default=False)
 
     # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="attorneys")  

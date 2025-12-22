@@ -22,6 +22,7 @@ class JobSchema(BaseModel):
     zoom_meeting_id: Optional[int] = None
     job_no: Optional[int] = None
     computed_status: Optional[str] = None
+    mark_is_done: Optional[bool] = None
     case: Optional[CaseListSchema] = None
 
     class Config:

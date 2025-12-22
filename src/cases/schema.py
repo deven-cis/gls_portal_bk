@@ -44,8 +44,16 @@ class CaseEditSchema(BaseModel):
 class GetCaseSchema(BaseModel):
     case_short_name: Optional[str] = None
     case_number: Optional[int] = None
+    mark_is_done: Optional[bool] = None
 
     class Config:
         from_attributes = True 
 
-       
+
+class MarkCaseAsDoneSchema(BaseModel):
+    mark_is_done: bool = True
+
+    class Config:
+        from_attributes = True
+
+        

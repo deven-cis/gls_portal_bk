@@ -20,12 +20,11 @@ class CancelReasonEnum(enum.Enum):
 
 
 class JobStatusEnum(enum.Enum):
-    UPCOMING = "upcoming"
-    SCHEDULED = "scheduled"
-    SESSION_NOT_STARTED = "session_not_started"
-    SESSION_IN_PROGRESS = "session_started"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
+    SCHEDULED = "Scheduled"
+    SESSION_NOT_STARTED = "Session not started"
+    SESSION_IN_PROGRESS = "Session Started"
+    COMPLETED = "Completed"
+    CANCELLED = "Cancelled"
 
 
 class Jobs(Base):

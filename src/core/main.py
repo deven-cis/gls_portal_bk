@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from src.auth.routes import auth_router
 from src.core.config import config
 from src.cases.routes import cases_router
-from src.jobs.routes import jobs_router
+from src.jobs.apis import jobs_apis
 from src.attorneys.routes import attorneys_router
 from src.billings.routes import billings_router
 from src.equipment_time.routes import equipment_time_router
@@ -61,7 +61,7 @@ app.include_router(
 )
 
 app.include_router(
-    jobs_router,
+    jobs_apis,
     tags=['jobs']
 )
 

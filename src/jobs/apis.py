@@ -2,7 +2,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, with_loader_criteria
 
 from src.auth.utils import get_current_user
 from src.jobs.models import Jobs
@@ -11,8 +11,13 @@ from src.cases.models import Cases
 from src.core.database import get_db
 from src.core.context import get_context
 from fastapi import APIRouter
-from src.jobs.schema import JobSchema
-from src.jobs.models import JobStatusEnum
+from src.jobs.schema import JobSchema, CancelJobSchema, CancelledAndCompletedJobSchema, CompletedJobDetailsSchema
+from src.jobs.models import JobStatusEnum, CancelReasonEnum
+from src.witnesses.models import Witnesses
+from src.witness_videos.models import WitnessVideos
+from src.attorneys.models import Attorneys
+from src.witnesses.schema import WitnessSchema
+from src.attorneys.schema import AttorneySchema
 
 jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
 
@@ -74,8 +79,8 @@ async def list_pending_jobs(
             .filter(Cases.entered_by == user_entered_by)
             .filter(Jobs.job_date >= datetime.combine(today, datetime.min.time()))
             .filter(Jobs.job_date < datetime.combine(today + timedelta(days=1), datetime.min.time()))
-            # .filter(Jobs.session_completed == False)
-            # .filter(Jobs.computed_status != "cancelled")
+            .filter(Jobs.session_completed == False)
+            .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
             .all()
         )
         logger.info(f"Found {len(jobs)} pending jobs for user {user_entered_by}")
@@ -107,6 +112,7 @@ async def list_upcoming_jobs(
             .options(joinedload(Jobs.case))
             .filter(Cases.entered_by == user_entered_by)
             .filter(Jobs.job_date >= datetime.combine(tomorrow, datetime.min.time()))
+            .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
             .all()
         )
         logger.info(f"Found {len(jobs)} upcoming jobs for user {user_entered_by}")
@@ -373,3 +379,331 @@ async def end_session(
         )
 
 
+@jobs_apis.post('/{job_no}/cancel', status_code=200)
+async def cancel_job(
+    job_no: int,
+    payload: CancelJobSchema,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    Cancel a job.
+    """
+    try:
+        user_entered_by = get_context('entered_by')
+        
+        job = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
+            .filter(Jobs.job_no == job_no)
+            .filter(Cases.entered_by == user_entered_by)
+            .first()
+        )
+
+        if not job:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": f"Job with job_no {job_no} not found or access denied",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        
+        
+        if payload.cancel_reason:
+            job.cancel_resone = payload.cancel_reason
+        else:
+            job.cancel_resone = None
+        
+        job.cancel_details = payload.cancel_details
+        job.cancel_by = user_entered_by
+        job.cancel_date = datetime.now()
+        job.computed_status = JobStatusEnum.CANCELLED.value
+        
+        db.commit()
+        db.refresh(job)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Job cancelled successfully",
+                "success": True,
+                "result": {} 
+            },
+            status_code=status.HTTP_200_OK
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error canceling job {job_no}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": "Failed to cancel job",
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+
+
+
+@jobs_apis.get('/cancelled_and_completed_jobs/{type}')
+async def cancelled_and_completed_jobs(
+    type: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    List all cancelled or completed jobs for a specific case.
+    """
+    try:
+        # Validate type parameter
+        if type not in ['Cancelled', 'Completed']:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": "Invalid type. Must be 'Cancelled' or 'Completed'",
+                    "success": False,
+                    "result": []
+                },
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user_entered_by = get_context('entered_by')
+        logger.info(f"Listing {type} jobs for user {user_entered_by}")
+        
+        # Build base query
+        query = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.entered_by == user_entered_by)
+        )
+        
+        # Apply type-specific filters
+        if type == 'Cancelled':
+            query = query.filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
+        else:  # Completed
+            query = query.filter(
+                Jobs.computed_status == JobStatusEnum.COMPLETED.value,
+                Jobs.session_completed == True
+            )
+        
+        jobs = query.all()
+        
+        if not jobs:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_200_OK,
+                    "message": f"No {type} jobs found",
+                    "success": True,
+                    "result": []
+                },
+                status_code=status.HTTP_200_OK
+            )
+        jobs_data = [CancelledAndCompletedJobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": f"{type} jobs listed successfully",
+                "success": True,
+                "result": jobs_data
+            },
+            status_code=status.HTTP_200_OK
+        )
+    except Exception as e:
+        logger.error(f"Error listing {type} jobs: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to list {type} jobs",
+                "success": False,
+                "result": []
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@jobs_apis.get('/get/{job_no}/completed_details', status_code=200)
+async def get_completed_job_details(
+    job_no: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    try:
+        user_entered_by = get_context('entered_by')
+        logger.info(f"Getting completed job details for job_no {job_no} for user {user_entered_by}")
+        
+        # Get the job and verify it belongs to the user and is completed or cancelled
+        job = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
+            .filter(Jobs.job_no == job_no)
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.entered_by == user_entered_by)
+            .filter(
+                (Jobs.computed_status == JobStatusEnum.COMPLETED.value)
+            )
+            .first()
+        )
+        
+        if not job:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": f"Job with job_no {job_no} not found, not completed/cancelled, or access denied",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        witnesses = (
+            db.query(Witnesses)
+            .options(
+                joinedload(Witnesses.witness_vid),
+                with_loader_criteria(
+                    WitnessVideos, 
+                    WitnessVideos.is_archived == False, 
+                    include_aliases=True
+                ),
+            )
+            .filter(
+                Witnesses.job_no == job_no,
+                Witnesses.is_archived == False
+            )
+            .all()
+        )
+        
+        attorneys = (
+            db.query(Attorneys)
+            .filter(
+                Attorneys.job_no == job_no,
+                Attorneys.is_archived == False
+            )
+            .all()
+        )
+        
+        witnesses_data = [
+            WitnessSchema.model_validate(witness).model_dump(mode='json') 
+            for witness in witnesses
+        ]
+        
+        attorneys_data = [
+            AttorneySchema.model_validate(attorney).model_dump(mode='json')
+            for attorney in attorneys
+        ]
+        
+        job_details = {
+            "job_no": job.job_no,
+            "witnesses": witnesses_data,
+            "attorneys": attorneys_data
+        }
+        
+        logger.info(
+            f"Found {len(witnesses_data)} witness(es) with videos and {len(attorneys_data)} attorney(s) "
+            f"for job_no {job_no}"
+        )
+        
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Job details retrieved successfully",
+                "success": True,
+                "result": job_details
+            },
+            status_code=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting completed job details for job_no {job_no}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to get job details: {str(e)}",
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+
+
+@jobs_apis.get('/get/{job_no}/cancelled_details', status_code=200)
+async def get_cancelled_job_details(
+    job_no: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    
+    try:
+        user_entered_by = get_context('entered_by')
+        logger.info(f"Getting cancelled job details for job_no {job_no} for user {user_entered_by}")
+        job = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
+            .filter(Jobs.job_no == job_no)
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.entered_by == user_entered_by)
+            .filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
+            .first()
+        )
+
+        if not job:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": f"Job with job_no {job_no} not found, not cancelled, or access denied",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if isinstance(job.cancel_resone, CancelReasonEnum):
+            cancel_reason_value = job.cancel_resone.value
+        else:
+            cancel_reason_value = job.cancel_resone
+
+        job_details = {
+            "job_no": job.job_no,
+            "cancel_reason": cancel_reason_value,
+            "cancel_details": job.cancel_details,
+        }
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Job details retrieved successfully",
+                "success": True,
+                "result": job_details
+            },
+            status_code=status.HTTP_200_OK
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting cancelled job details for job_no {job_no}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to get cancelled job details: {str(e)}",    
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

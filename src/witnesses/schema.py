@@ -143,3 +143,9 @@ class WitnessSaveAllPayloadSchema(BaseModel):
     replace_videos: bool = False
 
     videos: List[WitnessVideoUpsertSchema] = Field(default_factory=list)
+
+
+
+class WitnessCompletedDetailsSchema(BaseModel):
+    witness_name:Optional[str] = None
+    videos: List[WitnessVideoUpsertSchema] = Field(default_factory=list)

@@ -1,8 +1,13 @@
-from typing import List, Optional
-from datetime import datetime, timedelta
-from fastapi import Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from typing import List, Optional, Union
+from datetime import datetime, timedelta, date
+from fastapi import Depends, HTTPException, status, Query
+from fastapi.responses import JSONResponse, FileResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
+import subprocess
+import tempfile
+import os
+from pathlib import Path
 
 from src.auth.utils import get_current_user
 from src.jobs.models import Jobs
@@ -20,6 +25,129 @@ from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
 
 jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
+
+
+def get_witnesses_with_videos(job_no: int, db: Session) -> List[Witnesses]:
+    """
+    Helper function to get all witnesses with their videos for a job.
+    Reusable across different endpoints.
+    """
+    return (
+        db.query(Witnesses)
+        .options(
+            joinedload(Witnesses.witness_vid),
+            with_loader_criteria(
+                WitnessVideos, 
+                WitnessVideos.is_archived == False, 
+                include_aliases=True
+            ),
+        )
+        .filter(
+            Witnesses.job_no == job_no,
+            Witnesses.is_archived == False
+        )
+        .all()
+    )
+
+
+def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
+    """
+    Helper function to merge multiple video files using FFmpeg.
+    Returns the path to the merged video file.
+    """
+    if not video_paths:
+        raise ValueError("No video paths provided")
+    
+    # Create temporary directory for merged video
+    temp_dir = Path(tempfile.gettempdir())
+    merged_filename = f"job_{job_no}_all_videos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    merged_file_path = temp_dir / merged_filename
+    
+    # Create FFmpeg concat file list
+    concat_file = temp_dir / f"concat_list_{job_no}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    try:
+        # Get project root directory (parent of src directory)
+        project_root = Path(__file__).resolve().parent.parent.parent
+        
+        valid_video_count = 0
+        with open(concat_file, 'w') as f:
+            for video_path in video_paths:
+                # Convert relative paths to absolute paths
+                if not os.path.isabs(video_path):
+                    # If path is relative, resolve it relative to project root
+                    abs_video_path = (project_root / video_path).resolve()
+                else:
+                    abs_video_path = Path(video_path).resolve()
+                
+                # Check if file exists
+                if not abs_video_path.exists():
+                    logger.warning(f"Video file not found: {abs_video_path} (original: {video_path})")
+                    continue
+                
+                # Escape single quotes and wrap in quotes for FFmpeg
+                # Use absolute path for FFmpeg
+                escaped_path = str(abs_video_path).replace("'", "'\\''")
+                f.write(f"file '{escaped_path}'\n")
+                valid_video_count += 1
+        
+        if valid_video_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No valid video files found to merge"
+            )
+        
+        # Use FFmpeg to concatenate videos
+        # -f concat: use concat demuxer
+        # -safe 0: allow unsafe file paths
+        # -c copy: copy streams without re-encoding (faster)
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', str(concat_file),
+            '-c', 'copy',
+            '-y',  # Overwrite output file if exists
+            str(merged_file_path)
+        ]
+        
+        subprocess.run(
+            ffmpeg_cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        logger.info(f"Successfully merged {valid_video_count} videos for job_no {job_no}")
+        return merged_file_path
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error merging videos: {e.stderr}", exc_info=True)
+        # Try with re-encoding if copy fails
+        try:
+            logger.info("Retrying with re-encoding...")
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', str(concat_file),
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-y',
+                str(merged_file_path)
+            ]
+            subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=True)
+            logger.info(f"Successfully merged videos with re-encoding for job_no {job_no}")
+            return merged_file_path
+        except subprocess.CalledProcessError as e2:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to merge videos: {e2.stderr}. Please ensure FFmpeg is installed."
+            )
+    finally:
+        # Clean up concat file
+        if concat_file.exists():
+            concat_file.unlink()
 
 @jobs_apis.get('/list')
 async def list_jobs(
@@ -458,11 +586,14 @@ async def cancel_job(
 @jobs_apis.get('/cancelled_and_completed_jobs/{type}')
 async def cancelled_and_completed_jobs(
     type: str,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
-    List all cancelled or completed jobs for a specific case.
+    List all cancelled or completed jobs for the current user.
+    Optionally filter by `job_date` using `start_date` and/or `end_date` (inclusive).
     """
     try:
         # Validate type parameter
@@ -478,7 +609,10 @@ async def cancelled_and_completed_jobs(
             )
         
         user_entered_by = get_context('entered_by')
-        logger.info(f"Listing {type} jobs for user {user_entered_by}")
+        logger.info(
+            f"Listing {type} jobs for user {user_entered_by} "
+            f"(start_date={start_date}, end_date={end_date})"
+        )
         
         # Build base query
         query = (
@@ -489,6 +623,16 @@ async def cancelled_and_completed_jobs(
             .filter(Cases.entered_by == user_entered_by)
             .filter(Jobs.entered_by == user_entered_by)
         )
+
+        # Apply optional date filters (inclusive)
+        if start_date:
+            query = query.filter(
+                func.date(Jobs.job_date) >= start_date
+            )
+        if end_date:
+            query = query.filter(
+                func.date(Jobs.job_date) <= end_date
+            )
         
         # Apply type-specific filters
         if type == 'Cancelled':
@@ -534,17 +678,22 @@ async def cancelled_and_completed_jobs(
         )
 
 
-@jobs_apis.get('/get/{job_no}/completed_details', status_code=200)
+@jobs_apis.get('/get/{job_no}/completed_details', status_code=200, response_model=None)
 async def get_completed_job_details(
     job_no: int,
+    download_all: bool = Query(False, description="If true, merge and download all videos"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
-) -> JSONResponse:
+) -> Union[JSONResponse, FileResponse]:
+    """
+    Get completed job details including witnesses and attorneys.
+    If download_all=true, merges all videos using FFmpeg and returns as download.
+    """
     try:
         user_entered_by = get_context('entered_by')
         logger.info(f"Getting completed job details for job_no {job_no} for user {user_entered_by}")
         
-        # Get the job and verify it belongs to the user and is completed or cancelled
+        # Get the job and verify it belongs to the user and is completed
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -563,29 +712,15 @@ async def get_completed_job_details(
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Job with job_no {job_no} not found, not completed/cancelled, or access denied",
+                    "message": f"Job with job_no {job_no} not found, not completed, or access denied",
                     "success": False,
                     "result": {}
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        witnesses = (
-            db.query(Witnesses)
-            .options(
-                joinedload(Witnesses.witness_vid),
-                with_loader_criteria(
-                    WitnessVideos, 
-                    WitnessVideos.is_archived == False, 
-                    include_aliases=True
-                ),
-            )
-            .filter(
-                Witnesses.job_no == job_no,
-                Witnesses.is_archived == False
-            )
-            .all()
-        )
+        # Use helper function to get witnesses with videos
+        witnesses = get_witnesses_with_videos(job_no, db)
         
         attorneys = (
             db.query(Attorneys)
@@ -596,6 +731,41 @@ async def get_completed_job_details(
             .all()
         )
         
+        # If download_all is requested, merge videos and return file
+        if download_all:
+            # Collect all video file paths
+            video_paths = []
+            for witness in witnesses:
+                for video in witness.witness_vid:
+                    if video.file_path and Path(video.file_path).exists():
+                        video_paths.append(video.file_path)
+            
+            if not video_paths:
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_404_NOT_FOUND,
+                        "message": "No video files found for this job",
+                        "success": False,
+                        "result": {}
+                    },
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Merge videos using helper function
+            merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
+            merged_filename = merged_file_path.name
+            
+            # Return the merged file for download
+            return FileResponse(
+                path=str(merged_file_path),
+                filename=merged_filename,
+                media_type='video/mp4',
+                headers={
+                    "Content-Disposition": f"attachment; filename={merged_filename}"
+                }
+            )
+        
+        # Normal response: return JSON with job details
         witnesses_data = [
             WitnessSchema.model_validate(witness).model_dump(mode='json') 
             for witness in witnesses
@@ -627,6 +797,8 @@ async def get_completed_job_details(
             status_code=status.HTTP_200_OK
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting completed job details for job_no {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(

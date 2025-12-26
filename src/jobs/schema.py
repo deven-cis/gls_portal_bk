@@ -72,4 +72,22 @@ class CompletedJobDetailsSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CalendarEventSchema(BaseModel):
+    """Schema for calendar events matching frontend requirements"""
+    id: int  # job_no
+    title: str
+    date: datetime
+    startTime: str  # Format: "HH:MM"
+    endTime: str  # Format: "HH:MM"
+    status: Optional[str] = None  # "pending" if videos are pending
+    videosUploaded: Optional[int] = None
+    totalVideos: Optional[int] = None
+    deadline: Optional[datetime] = None
+    type: str = "deposition"
+    hasVideo: bool = False
+
+    class Config:
+        from_attributes = True
     

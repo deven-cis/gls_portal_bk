@@ -16,8 +16,19 @@ from src.cases.models import Cases
 from src.core.database import get_db
 from src.core.context import get_context
 from fastapi import APIRouter
-from src.jobs.schema import JobSchema, CancelJobSchema, CancelledAndCompletedJobSchema, CompletedJobDetailsSchema
+from src.jobs.schema import (
+    JobSchema, 
+    CancelJobSchema, 
+    CancelledAndCompletedJobSchema, 
+    CompletedJobDetailsSchema,
+    CalendarEventSchema
+)
 from src.jobs.models import JobStatusEnum, CancelReasonEnum
+from src.jobs.utils import (
+    job_to_calendar_event,
+    get_date_range_for_month,
+    get_date_range_for_week
+)
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
@@ -879,3 +890,170 @@ async def get_cancelled_job_details(
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+def _get_calendar_events_query(
+    db: Session,
+    user_entered_by: int,
+    start_date: date,
+    end_date: date
+) -> List[Jobs]:
+    return (
+        db.query(Jobs)
+        .join(Cases, Jobs.case_no == Cases.case_no)
+        .options(joinedload(Jobs.case))
+        .filter(Cases.is_archived == False)
+        .filter(Jobs.is_archived == False)
+        .filter(Cases.entered_by == user_entered_by)
+        .filter(
+            func.date(Jobs.job_date) >= start_date,
+            func.date(Jobs.job_date) <= end_date
+        )
+        .order_by(Jobs.job_date, Jobs.start_time)
+        .all()
+    )
+
+
+@jobs_apis.get('/calendar/events', status_code=200)
+async def get_calendar_events(
+    # Month filter (priority 1)
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    day: Optional[int] = Query(None),
+    # Custom date range filter (priority 2)
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    try:
+        user_entered_by = get_context('entered_by')
+        start_date_filter: date
+        end_date_filter: date
+        filter_type: str = ""
+        # Determine filter type based on provided parameters (priority order)
+        if year is not None and month is not None and day is not None:
+            # Week view
+            if not (1 <= month <= 12):
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_400_BAD_REQUEST,
+                        "message": "Invalid month. Must be between 1 and 12",
+                        "success": False,
+                        "result": []
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not (1 <= day <= 31):
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_400_BAD_REQUEST,
+                        "message": "Invalid day. Must be between 1 and 31",
+                        "success": False,
+                        "result": []
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                target_date = date(year, month, day)
+            except ValueError as e:
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_400_BAD_REQUEST,
+                        "message": f"Invalid date: {str(e)}",
+                        "success": False,
+                        "result": []
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            logger.info(f"Week view: Year: {year}, Month: {month}, Day: {day}, Start date: {start_date}, End date: {end_date}")
+            start_date_filter, end_date_filter = get_date_range_for_week(year, month, day)
+            logger.info(f"Start date: {start_date_filter}, End date: {end_date_filter}")
+            filter_type = f"week containing {target_date}"
+            logger.info(f"Fetching calendar events for week containing {target_date} for user {user_entered_by}")
+            
+        elif year is not None and month is not None:
+            # Month view
+            if not (1 <= month <= 12):
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_400_BAD_REQUEST,
+                        "message": "Invalid month. Must be between 1 and 12",
+                        "success": False,
+                        "result": []
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            start_date_filter, end_date_filter = get_date_range_for_month(year, month)
+            filter_type = f"month {year}-{month:02d}"
+            logger.info(f"Fetching calendar events for month {year}-{month:02d} for user {user_entered_by}")
+            
+        elif start_date is not None and end_date is not None:
+            # Custom date range
+            if start_date > end_date:
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_400_BAD_REQUEST,
+                        "message": "start_date must be before or equal to end_date",
+                        "success": False,
+                        "result": []
+                    },
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            start_date_filter = start_date
+            end_date_filter = end_date
+            filter_type = f"custom range {start_date} to {end_date}"
+            logger.info(f"Fetching calendar events from {start_date} to {end_date} for user {user_entered_by}")
+            
+        else:
+            # No valid filter combination provided
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": (
+                        "Invalid parameters. Provide one of:\n"
+                        "1. year + month + day (for week view)\n"
+                        "2. year + month (for month view)\n"
+                        "3. start_date + end_date (for custom range)"
+                    ),
+                    "success": False,
+                    "result": []
+                },
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Use shared query function
+        jobs = _get_calendar_events_query(db, user_entered_by, start_date_filter, end_date_filter)
+        
+        # Convert jobs to calendar events
+        events = [job_to_calendar_event(job, db).model_dump(mode='json') for job in jobs]
+        logger.info(f"Events: {events}")
+        logger.info(f"Found {len(events)} calendar events for {filter_type}")
+        
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Calendar events retrieved successfully",
+                "success": True,
+                "result": events
+            },
+            status_code=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"Error fetching calendar events: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to fetch calendar events: {str(e)}",
+                "success": False,
+                "result": []
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+

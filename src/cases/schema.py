@@ -51,7 +51,7 @@ class GetCaseSchema(BaseModel):
 
 
 class MarkCaseAsDoneSchema(BaseModel):
-    mark_is_done: bool = True
+    is_done: bool = True
 
     class Config:
         from_attributes = True

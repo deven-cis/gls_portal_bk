@@ -62,7 +62,11 @@ class Jobs(Base):
     mark_is_done = Column(Boolean, default=False)
     video_upload_deadline = Column(DateTime, nullable=True)
     expected_video_count = Column(Integer, nullable=True)
-
+    mark_is_done_case = Column(Boolean, default=False, server_default='false')
+    mark_is_done_witnesses = Column(Boolean, default=False, server_default='false')
+    mark_is_done_attorneys = Column(Boolean, default=False, server_default='false')
+    mark_is_done_billings = Column(Boolean, default=False, server_default='false')
+    mark_is_done_equipment_time = Column(Boolean, default=False, server_default='false')
     # Many-to-one: each job belongs to a single case
     # Using string reference to avoid circular imports
     case = relationship(

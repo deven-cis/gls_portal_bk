@@ -91,3 +91,13 @@ class CalendarEventSchema(BaseModel):
     class Config:
         from_attributes = True
     
+class MarkJobAsDoneSchema(BaseModel):
+    job_no: int
+    mark_is_done_case: Optional[bool] = False
+    mark_is_done_witnesses: Optional[bool] = False
+    mark_is_done_attorneys: Optional[bool] = False
+    mark_is_done_billings: Optional[bool] = False
+    mark_is_done_equipment_time: Optional[bool] = False
+
+    class Config:
+        from_attributes = True

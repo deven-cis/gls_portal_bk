@@ -165,16 +165,7 @@ def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
 
 
 def get_date_range_for_month(year: int, month: int) -> Tuple[date, date]:
-    """
-    Get start and end dates for a given month.
-    
-    Args:
-        year: Year (e.g., 2025)
-        month: Month (1-12)
-        
-    Returns:
-        tuple: (start_date, end_date) for the month
-    """
+   
     # First day of the month
     start_date = date(year, month, 1)
     
@@ -188,18 +179,6 @@ def get_date_range_for_month(year: int, month: int) -> Tuple[date, date]:
 
 
 def get_date_range_for_week(year: int, month: int, day: int) -> Tuple[date, date]:
-    """
-    Get start and end dates for a week containing the given date.
-    Week starts on Monday and ends on Sunday.
-    
-    Args:
-        year: Year
-        month: Month (1-12)
-        day: Day of month
-        
-    Returns:
-        tuple: (start_date, end_date) for the week
-    """
     target_date = date(year, month, day)
     
     # Get Monday of the week (weekday 0 = Monday)

@@ -54,3 +54,10 @@ class PasswordChangeSchema(BaseModel):
     user_id: int
     old_password: str
     new_password: str
+
+
+class RefreshTokenSchema(BaseModel):
+    """
+    Refresh Token Schema
+    """
+    refresh_token: str

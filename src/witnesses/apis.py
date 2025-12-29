@@ -202,9 +202,6 @@ async def update_witness_name(
             )
 
         witness.witness_name = name
-        # IMPORTANT: use the same SQLAlchemy session (`db`) that loaded `witness`.
-        # `Base.save()` uses a different session (context/next(get_db)) which causes:
-        # "Instance ... is not persistent within this Session"
         witness.last_modified_at = now
         witness.last_modified_by = entered_by
         db.commit()

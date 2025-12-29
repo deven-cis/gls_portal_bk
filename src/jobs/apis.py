@@ -1,6 +1,6 @@
 from typing import List, Optional, Union
 from datetime import datetime, timedelta, date
-from fastapi import Depends, HTTPException, status, Query
+from fastapi import Depends, HTTPException, status, Query, Body
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
@@ -21,7 +21,8 @@ from src.jobs.schema import (
     CancelJobSchema, 
     CancelledAndCompletedJobSchema, 
     CompletedJobDetailsSchema,
-    CalendarEventSchema
+    CalendarEventSchema,
+    MarkJobAsDoneSchema
 )
 from src.jobs.models import JobStatusEnum, CancelReasonEnum
 from src.jobs.utils import (
@@ -36,6 +37,60 @@ from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
 
 jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
+
+
+@jobs_apis.get("/get/{job_no}/{case_no}", status_code=200)  
+async def get_mark_as_done_status(
+    job_no: int,
+    case_no: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    try:
+        logger.info(f"Getting mark as done status for job_no {job_no} and case_no {case_no}")
+        job = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Jobs.job_no == job_no, Jobs.is_archived == False)
+            .options(joinedload(Jobs.case))
+            .first()
+        )
+        if not job:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Job not found",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        logger.info(f"Job: {job}")
+        mark_as_done_status = MarkJobAsDoneSchema.model_validate(job).model_dump()
+        logger.info(f"Mark as done status: {mark_as_done_status}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Job fetched successfully",
+                "success": True,
+                "result": mark_as_done_status   
+            },
+            status_code=status.HTTP_200_OK
+        ) 
+    except Exception as e:
+        logger.error(f"Error getting mark as done status: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": "Failed to get mark as done status",
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+
 
 
 def get_witnesses_with_videos(job_no: int, db: Session) -> List[Witnesses]:
@@ -890,6 +945,99 @@ async def get_cancelled_job_details(
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+@jobs_apis.patch("/{job_no}/mark_as_done/{type}", status_code=200)
+async def mark_job_as_done(
+    job_no: int,
+    type: str,
+    body: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    try:
+        # Validate type parameter
+        valid_types = ['case', 'witnesses', 'attorneys', 'billings', 'equipment_time']
+        if type not in valid_types:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": f"Invalid type. Must be one of: {', '.join(valid_types)}",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Extract is_done from request body
+        is_done = body.get("is_done", False)
+        
+        logger.info(f"Marking job {job_no} as done: {type} = {is_done}")
+        user_entered_by = get_context('entered_by') 
+        
+        # Optimized single query with all filters
+        job = (
+            db.query(Jobs)
+            .filter(
+                Jobs.job_no == job_no,
+                Jobs.is_archived == False,
+                Jobs.entered_by == user_entered_by
+            )
+            .first()
+        )
+        
+        if not job:
+            logger.warning(f'Job {job_no} not found for user {user_entered_by}')
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Job not found or access denied",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update mark_is_done status
+        setattr(job, f"mark_is_done_{type}", is_done)
+        db.commit()
+        db.refresh(job)
+        
+        logger.info(f'Job {job_no} marked as done: {type} = {is_done}')
+        
+        # Simplified response message
+        message = f"Job {job_no} {type} marked as done successfully" if is_done else f"Job {job_no} {type} marked as not done successfully"
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": message,
+                "success": True,
+                "result": {
+                    "job_no": job.job_no,
+                    "type": type,
+                    "mark_is_done": is_done
+                }
+            },
+            status_code=status.HTTP_200_OK
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error marking job {job_no} as done: {type}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to mark job {job_no} as done: {type}",
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+
+
 
 
 def _get_calendar_events_query(

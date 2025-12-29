@@ -38,5 +38,7 @@ SETUP_COMPLETE.md
 *~
 
 #cursor
-.cursor/
+.cursor
+.cursor/debug.log
+.debug.log
 .qodobot/

@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 
 class AttorneySchema(BaseModel):
-    id: Optional[int] = None
+    id: int
     job_no: int
     attorney_name: str
     firm_name: str
@@ -27,6 +27,7 @@ class AttorneyCreateSchema(BaseModel):
 
 
 class AttorneyUpdateSchema(BaseModel):
+    id: int
     attorney_name: Optional[str] = None
     firm_name: Optional[str] = None
     notes: Optional[str] = None

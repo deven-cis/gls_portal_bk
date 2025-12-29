@@ -13,7 +13,7 @@ from src.core.utils import send_email
 from src.core.config import config
 from src.auth.utils import create_forget_password_token, verify_token
 from src.users.utils import hash_password
-from src.auth.schema import PasswordResetSchema, LogoutResponseSchema
+from src.auth.schema import PasswordResetSchema, LogoutResponseSchema, RefreshTokenSchema
 from src.users.models import Users
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials 
@@ -101,27 +101,35 @@ async def login_user(data: LoginCredentialSchema):
             status_code=status.HTTP_200_OK,
         )
 
-async def refresh_token(refresh_token: str):
+async def refresh_token(data: RefreshTokenSchema):
     """
     Refresh access token using a valid refresh token
     """
     try:
         # Decode the refresh token
-        payload = decode_token(refresh_token)
+        payload = decode_token(data.refresh_token)
         
         # Check if the token is a refresh token
         if payload.get('type') != 'refresh':
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type"
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                    "success": False,
+                    "result": {"message": "Invalid token type"}
+                },
+                status_code=status.HTTP_401_UNAUTHORIZED
             )
             
         # Check if user still exists
         user = Users.get(payload.get('id'))
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                    "success": False,
+                    "result": {"message": "User not found"}
+                },
+                status_code=status.HTTP_401_UNAUTHORIZED
             )
             
         # Create new tokens
@@ -131,18 +139,67 @@ async def refresh_token(refresh_token: str):
             'entered_by': getattr(user, 'entered_by', None)
         }
         
-        return create_access_token(token_data)
+        new_tokens = create_access_token(token_data)
         
+        # Prepare user response
+        user_response = {   
+            'id': user.id,
+            'full_name': user.full_name or '',
+            'email': user.email or '',
+            'login_name': user.login_name or '',
+            'require_password_change': bool(getattr(user, 'require_password_change', False)),
+            'entered_by': getattr(user, 'entered_by', None),
+            'last_modified_by': getattr(user, 'last_modified_by', None)
+        }
+        
+        # Return response in same format as login
+        response = {
+            'access_token': new_tokens['access_token'],
+            'refresh_token': new_tokens['refresh_token'],
+            'token_type': 'bearer',
+            'expires_in': new_tokens['expires_in'],
+            'user': user_response
+        }
+        
+        logger.info(f"Token refreshed successfully for user: {user.login_name}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "success": True,
+                "result": response
+            },
+            status_code=status.HTTP_200_OK
+        )
+        
+    except HTTPException as e:
+        # Re-raise HTTP exceptions (from decode_token)
+        return JSONResponse(
+            content={
+                "status_code": e.status_code,
+                "success": False,
+                "result": {"message": e.detail}
+            },
+            status_code=e.status_code
+        )
     except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
+        logger.error(f"JWT error refreshing token: {str(e)}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_401_UNAUTHORIZED,
+                "success": False,
+                "result": {"message": "Invalid token"}
+            },
+            status_code=status.HTTP_401_UNAUTHORIZED
         )
     except Exception as e:
-        logger.error(f"Error refreshing token: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not refresh token"
+        logger.error(f"Error refreshing token: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "success": False,
+                "result": {"message": "Could not refresh token"}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 

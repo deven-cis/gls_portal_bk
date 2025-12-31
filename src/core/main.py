@@ -17,6 +17,7 @@ from src.additional_documents.routes import additional_documents_router
 from src.witnesses.routes import witnesses_api
 from src.core.relationships import init_relationships
 from src.users.apis import users_router
+from src.job_assignment.apis import job_assignment_apis
 
 app = FastAPI(
     title=config.APPLICATION_NAME,
@@ -90,6 +91,10 @@ app.include_router(
     tags=['additional-documents']
 )
 
+app.include_router(
+    job_assignment_apis,
+    tags=['job-assignment']
+)
 
 # app.include_router(
 #     user_router,

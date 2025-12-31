@@ -270,4 +270,29 @@ async def change_password(
 
 
 
-
+@users_router.get("/assignee-users-list", status_code=200)
+async def assignee_users_list(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    try:
+        list_of_users = db.query(Users).filter(Users.is_archived == False).all()
+        logger.info(f"List of users: {list_of_users}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "success": True,
+                "result": [UserResponseSchema.model_validate(user).model_dump(mode="json") for user in list_of_users],
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        logger.error(f"Error getting list of users: {str(e)}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "success": False,
+                "result": [],
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )

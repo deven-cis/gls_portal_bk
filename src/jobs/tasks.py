@@ -9,6 +9,7 @@ from src.additional_documents.models import AdditionalDocuments
 from src.equipment_time.models import EquipmentTime
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
+from src.job_assignment.models import JobAssignment
 
 @celery_app.task(name='src.jobs.tasks.update_job_statuses')
 def update_job_statuses():

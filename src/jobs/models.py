@@ -9,8 +9,7 @@ from src.billings.models import Billings
 from src.additional_documents.models import AdditionalDocuments
 from src.equipment_time.models import EquipmentTime
 from src.witnesses.models import Witnesses
-from src.cases.models import Cases 
-
+from src.cases.models import Cases
 
 class CancelReasonEnum(enum.Enum):
     HEARING_RESCHEDULED = "Hearing rescheduled"
@@ -48,7 +47,7 @@ class Jobs(Base):
     confirmation_notes_html = Column(String, nullable=True)
     cancel_by = Column(Integer, nullable=True)
     cancel_date = Column(DateTime, nullable=True)
-    job_no = Column(Integer, nullable=True)
+    job_no = Column(Integer, unique=True, nullable=True)
     cancel_details = Column(Text, nullable=True)
     cancel_resone = Column(
         PgEnum(CancelReasonEnum, name="cancel_reason_enum"),
@@ -67,6 +66,16 @@ class Jobs(Base):
     mark_is_done_attorneys = Column(Boolean, default=False, server_default='false')
     mark_is_done_billings = Column(Boolean, default=False, server_default='false')
     mark_is_done_equipment_time = Column(Boolean, default=False, server_default='false')
+    
+    # Assignment history - tracks all assignments/reassignments for this job
+    assignment_history = relationship(
+        "JobAssignment",
+        back_populates="job",
+        foreign_keys="[JobAssignment.job_no]",
+        primaryjoin="Jobs.job_no == JobAssignment.job_no",
+        order_by="JobAssignment.entered_at.desc()"
+    )
+
     # Many-to-one: each job belongs to a single case
     # Using string reference to avoid circular imports
     case = relationship(

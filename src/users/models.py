@@ -1,12 +1,26 @@
 from sqlalchemy import Column, String, LargeBinary, Boolean
-
+from sqlalchemy.orm import relationship
 from src.core.models import Base
-
+from src.job_assignment.models import JobAssignment
 
 class Users(Base):
     full_name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
-    login_name = Column(String, unique=True, index=True, nullable=False) # Fix the missing import
+    login_name = Column(String, unique=True, index=True, nullable=False)
     login_password = Column(LargeBinary)
     require_password_change = Column(Boolean, default=False)
     profile_image_url = Column(String, nullable=True)
+
+    # Jobs assigned TO this user (as assignee)
+    assigned_jobs = relationship(
+        JobAssignment,
+        foreign_keys="[JobAssignment.assignee_id]",
+        back_populates="assignee"
+    )
+    
+    # Jobs assigned BY this user (as assigner)
+    jobs_assigned_by_me = relationship(
+        JobAssignment,
+        foreign_keys="[JobAssignment.assigner_id]",
+        back_populates="assigner"
+    )

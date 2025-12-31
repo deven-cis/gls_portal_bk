@@ -10,7 +10,7 @@ class Cases(Base):
     case_type = Column(String, nullable=True)
     status = Column(String, nullable=True)
     trial_date = Column(DateTime, nullable=True)
-    case_no = Column(Integer, nullable=True)
+    case_no = Column(Integer, unique=True, nullable=False)
     case_number = Column(Integer, nullable=True)
     mark_is_done = Column(Boolean, default=False)
     # Case progress tracking fields

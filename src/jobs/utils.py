@@ -151,6 +151,7 @@ def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
     
     return CalendarEventSchema(
         id=job.job_no,
+        case_id=job.case.id,
         title=title,
         date=job.job_date,
         startTime=start_time_str,

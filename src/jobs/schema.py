@@ -77,6 +77,7 @@ class CompletedJobDetailsSchema(BaseModel):
 class CalendarEventSchema(BaseModel):
     """Schema for calendar events matching frontend requirements"""
     id: int  # job_no
+    case_id: int  # case.id
     title: str
     date: datetime
     startTime: str  # Format: "HH:MM"

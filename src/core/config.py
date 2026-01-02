@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """
 
     # JWT
-    ACCESS_TOKEN_EXPIRATION_TIME: int = 120  # 2 minutes for testing (change back to 6600 for production)
+    ACCESS_TOKEN_EXPIRATION_TIME: int = 10,800  # 2 minutes for testing (change back to 6600 for production)
     REFRESH_TOKEN_EXPIRATION_TIME: int = 604800
     SECRET_KEY: str = "sfiw0ef2_kansls23ml-2jwdnslknddsf"
     ALGORITHM: str = "HS256"

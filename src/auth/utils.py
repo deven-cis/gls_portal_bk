@@ -45,24 +45,19 @@ def verify_token(token: str):
 
 
 def create_tokens(data: dict, token_type: str = 'access') -> dict:
-    """
-    Create access or refresh token
-    :param data: Dictionary containing user data
-    :param token_type: Type of token to create ('access' or 'refresh')
-    :return: Dictionary containing the token and its expiration time
-    """
     to_encode = data.copy()
     
     if token_type == 'access':
         expires_delta = timedelta(seconds=config.ACCESS_TOKEN_EXPIRATION_TIME)
-    else:  # refresh token
+    else:
         expires_delta = timedelta(seconds=config.REFRESH_TOKEN_EXPIRATION_TIME)
     
-    expire = datetime.now() + expires_delta
+    # ✅ Use UTC time for JWT exp claim
+    expire = datetime.utcnow() + expires_delta
     to_encode.update({
         'exp': expire,
         'type': token_type,
-        'iat': datetime.now()
+        'iat': datetime.utcnow()  # Also fix iat
     })
     
     token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)

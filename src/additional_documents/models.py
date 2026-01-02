@@ -5,9 +5,9 @@ from sqlalchemy.orm import relationship
 class AdditionalDocuments(Base):
     __tablename__ = "additional_documents"
 
-    job_no = Column(Integer, ForeignKey("jobs.job_no"), nullable=False, index=True)
-    billing_id = Column(Integer, ForeignKey("billings.id"), nullable=True, index=True)
-    equipment_time_id = Column(Integer, ForeignKey("equipment_time.id"), nullable=True, index=True)
+    job_no = Column(Integer, ForeignKey("jobs.job_no", ondelete="CASCADE"), nullable=False, index=True)
+    billing_id = Column(Integer, ForeignKey("billings.id", ondelete="CASCADE"), nullable=True, index=True)
+    equipment_time_id = Column(Integer, ForeignKey("equipment_time.id", ondelete="CASCADE"), nullable=True, index=True)
     file_name = Column(Text, nullable=True)
     file_path = Column(Text, nullable=True)
 

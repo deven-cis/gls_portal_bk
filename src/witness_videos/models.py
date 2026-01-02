@@ -8,10 +8,10 @@ from src.witnesses.models import Witnesses
 class WitnessVideos(Base):
     __tablename__ = "witness_videos"
 
-    wit_no = Column(Integer, ForeignKey("witnesses.id", ondelete="CASCADE"), nullable=False)
-    job_no = Column(Integer, ForeignKey("jobs.job_no"), nullable=False)
-    start_time = Column(String(255), nullable=True)
-    end_time = Column(String(255), nullable=True)
+    wit_no = Column(Integer, ForeignKey("witnesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_no = Column(Integer, ForeignKey("jobs.job_no", ondelete="CASCADE"), nullable=False, index=True)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
     file_name = Column(Text, nullable=True)
     file_path = Column(Text, nullable=True)
 

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "admin123"
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
-    DB_NAME: str = "gls_db"
+    DB_NAME: str = "new_gls_db"
     
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

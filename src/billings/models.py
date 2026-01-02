@@ -8,13 +8,12 @@ from sqlalchemy.orm import relationship
 class Billings(Base):
     __tablename__ = "billings"
 
-    job_no = Column(Integer, ForeignKey("jobs.job_no"), nullable=False, index=True)
+    job_no = Column(Integer, ForeignKey("jobs.job_no", ondelete="CASCADE"), nullable=False, index=True)
     cancel_en_route = Column(Boolean, default=False)
     cancel_setup = Column(Boolean, default=False)
     billing_notes = Column(Text, nullable=True)
     videographer_hours_present = Column(String(255), nullable=True)
     file_hours_length = Column(String(255), nullable=True)
-    mark_is_done = Column(Boolean, default=False)
 
     # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="billing")

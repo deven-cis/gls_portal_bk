@@ -39,6 +39,75 @@ from src.attorneys.schema import AttorneySchema
 jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
 
 
+@jobs_apis.get('/get/{job_no}/cancelled_details', status_code=200)
+async def get_cancelled_job_details(
+    job_no: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    
+    try:
+        user_entered_by = get_context('entered_by')
+        logger.info(f"Getting cancelled job details for job_no {job_no} for user {user_entered_by}")
+        
+        job = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
+            .filter(Jobs.job_no == job_no)
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.entered_by == user_entered_by)
+            .filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
+            .first()
+        )
+
+        if not job:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": f"Job with job_no {job_no} not found, not cancelled, or access denied",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if isinstance(job.cancel_reason, CancelReasonEnum):
+            cancel_reason_value = job.cancel_reason.value
+        else:
+            cancel_reason_value = job.cancel_reason
+
+        job_details = {
+            "job_no": job.job_no,
+            "cancel_reason": cancel_reason_value,
+            "cancel_details": job.cancel_details,
+        }
+        logger.info(f"Job details: {job_details}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Job details retrieved successfully",
+                "success": True,
+                "result": job_details
+            },
+            status_code=status.HTTP_200_OK
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting cancelled job details for job_no {job_no}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to get cancelled job details: {str(e)}",    
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @jobs_apis.get("/get/{job_no}/{case_no}", status_code=200)  
 async def get_mark_as_done_status(
     job_no: int,
@@ -254,70 +323,162 @@ async def list_jobs_by_case(
 
 @jobs_apis.get('/pending/')
 async def list_pending_jobs(
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
-) -> List[JobSchema]:
+) -> JSONResponse:
     """
-    Return only pending jobs (today's jobs in progress or waiting to start).
+    Return only pending jobs (today's jobs in progress or waiting to start) with pagination.
     Status: session_not_started or session_in_progress
     Exclude: cancelled jobs
+    Supports infinite scrolling with pagination.
     """
     try:
         user_entered_by = get_context('entered_by')
         today = datetime.now().date()
         
-        jobs = (
+        # Build base query
+        query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
             .options(joinedload(Jobs.case))
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
             .filter(Cases.entered_by == user_entered_by)
             .filter(Jobs.entered_by == user_entered_by)
             .filter(Jobs.job_date <= datetime.combine(today, datetime.min.time()))
             .filter(Jobs.session_completed == False)
             .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
-            .all() 
         )
-        logger.info(f"Found {len(jobs)} pending jobs for user {user_entered_by}")
-        return [JobSchema.model_validate(job).model_dump() for job in jobs]
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination and ordering
+        jobs = (
+            query
+            .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        
+        # Calculate total pages
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        
+        jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+        
+        logger.info(f"Found {len(jobs_data)} pending jobs (page {page}/{total_pages}) for user {user_entered_by}")
+        
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Pending jobs retrieved successfully",
+                "success": True,
+                "result": jobs_data,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1
+                }
+            },
+            status_code=status.HTTP_200_OK
+        )
 
     except Exception as e:
         logger.error(f"Error fetching pending jobs: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Unable to fetch pending jobs',
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": "Unable to fetch pending jobs",
+                "success": False,
+                "result": [],
+                "pagination": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 @jobs_apis.get('/upcoming/')
 async def list_upcoming_jobs(
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
-) -> List[JobSchema]:
+) -> JSONResponse:
     """
-    Return only upcoming jobs (tomorrow and beyond).
+    Return only upcoming jobs (tomorrow and beyond) with pagination.
     Status: upcoming
+    Supports infinite scrolling with pagination.
     """
     try:
         user_entered_by = get_context('entered_by')
         tomorrow = (datetime.now().date() + timedelta(days=1))
-        
-        jobs = (
+        logger.info(f"page_size: {page_size}")
+        # Build base query
+        query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
             .options(joinedload(Jobs.case))
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
             .filter(Cases.entered_by == user_entered_by)
             .filter(Jobs.job_date >= datetime.combine(tomorrow, datetime.min.time()))
             .filter(Jobs.entered_by == user_entered_by)
             .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
+        )
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination and ordering
+        jobs = (
+            query
+            .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
             .all()
         )
-        logger.info(f"Found {len(jobs)} upcoming jobs for user {user_entered_by}")
-        return [JobSchema.model_validate(job).model_dump() for job in jobs]
+        
+        # Calculate total pages
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        
+        jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+        
+        logger.info(f"Found {len(jobs_data)} upcoming jobs (page {page}/{total_pages}) for user {user_entered_by}")
+        
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Upcoming jobs retrieved successfully",
+                "success": True,
+                "result": jobs_data,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1
+                }
+            },
+            status_code=status.HTTP_200_OK
+        )
 
     except Exception as e:
         logger.error(f"Error fetching upcoming jobs: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Unable to fetch upcoming jobs',
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": "Unable to fetch upcoming jobs",
+                "success": False,
+                "result": [],
+                "pagination": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 @jobs_apis.get('/get/{job_no}/session_start_time/', status_code=200)
@@ -609,11 +770,17 @@ async def cancel_job(
             )
         
         
+        logger.info(f"Cancelling job {job_no} with payload: {payload.cancel_reason}")
         
+        # Assign cancel_reason - SQLAlchemy PgEnum will automatically convert enum to value
         if payload.cancel_reason:
-            job.cancel_resone = payload.cancel_reason
+            # Ensure we're assigning the enum member itself (not the value)
+            # SQLAlchemy's PgEnum will handle the conversion to database value
+            job.cancel_reason = payload.cancel_reason
+            logger.info(f"Assigned cancel_reason: {payload.cancel_reason} (type: {type(payload.cancel_reason)})")
         else:
-            job.cancel_resone = None
+            job.cancel_reason = None
+            logger.info("Cancel reason set to None")
         
         job.cancel_details = payload.cancel_details
         job.cancel_by = user_entered_by
@@ -622,6 +789,9 @@ async def cancel_job(
         
         db.commit()
         db.refresh(job)
+        
+        # Log the saved value to verify
+        logger.info(f"Saved cancel_reason to database: {job.cancel_reason}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -655,11 +825,13 @@ async def cancelled_and_completed_jobs(
     type: str,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
-    List all cancelled or completed jobs for the current user.
+    List all cancelled or completed jobs for the current user with pagination.
     Optionally filter by `job_date` using `start_date` and/or `end_date` (inclusive).
     """
     try:
@@ -670,7 +842,8 @@ async def cancelled_and_completed_jobs(
                     "status_code": status.HTTP_400_BAD_REQUEST,
                     "message": "Invalid type. Must be 'Cancelled' or 'Completed'",
                     "success": False,
-                    "result": []
+                    "result": [],
+                    "pagination": {}
                 },
                 status_code=status.HTTP_400_BAD_REQUEST
             )
@@ -678,7 +851,7 @@ async def cancelled_and_completed_jobs(
         user_entered_by = get_context('entered_by')
         logger.info(
             f"Listing {type} jobs for user {user_entered_by} "
-            f"(start_date={start_date}, end_date={end_date})"
+            f"(start_date={start_date}, end_date={end_date}, page={page}, page_size={page_size})"
         )
         
         # Build base query
@@ -710,7 +883,20 @@ async def cancelled_and_completed_jobs(
                 Jobs.session_completed == True
             )
         
-        jobs = query.all()
+        # Get total count before pagination
+        total = query.count()
+        
+        # Apply pagination and ordering
+        jobs = (
+            query
+            .order_by(Jobs.job_date.desc(), Jobs.job_no.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        
+        # Calculate total pages
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         
         if not jobs:
             return JSONResponse(
@@ -718,17 +904,34 @@ async def cancelled_and_completed_jobs(
                     "status_code": status.HTTP_200_OK,
                     "message": f"No {type} jobs found",
                     "success": True,
-                    "result": []
+                    "result": [],
+                    "pagination": {
+                        "page": page,
+                        "page_size": page_size,
+                        "total": total,
+                        "total_pages": total_pages,
+                        "has_next": False,
+                        "has_previous": False
+                    }
                 },
                 status_code=status.HTTP_200_OK
             )
+        
         jobs_data = [CancelledAndCompletedJobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
                 "message": f"{type} jobs listed successfully",
                 "success": True,
-                "result": jobs_data
+                "result": jobs_data,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "total_pages": total_pages,
+                    "has_next": page < total_pages,
+                    "has_previous": page > 1
+                }
             },
             status_code=status.HTTP_200_OK
         )
@@ -879,73 +1082,6 @@ async def get_completed_job_details(
         )
 
 
-
-
-@jobs_apis.get('/get/{job_no}/cancelled_details', status_code=200)
-async def get_cancelled_job_details(
-    job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> JSONResponse:
-    
-    try:
-        user_entered_by = get_context('entered_by')
-        logger.info(f"Getting cancelled job details for job_no {job_no} for user {user_entered_by}")
-        job = (
-            db.query(Jobs)
-            .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.entered_by == user_entered_by)
-            .filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
-            .first()
-        )
-
-        if not job:
-            return JSONResponse(
-                content={
-                    "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Job with job_no {job_no} not found, not cancelled, or access denied",
-                    "success": False,
-                    "result": {}
-                },
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-
-        if isinstance(job.cancel_resone, CancelReasonEnum):
-            cancel_reason_value = job.cancel_resone.value
-        else:
-            cancel_reason_value = job.cancel_resone
-
-        job_details = {
-            "job_no": job.job_no,
-            "cancel_reason": cancel_reason_value,
-            "cancel_details": job.cancel_details,
-        }
-        return JSONResponse(
-            content={
-                "status_code": status.HTTP_200_OK,
-                "message": "Job details retrieved successfully",
-                "success": True,
-                "result": job_details
-            },
-            status_code=status.HTTP_200_OK
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting cancelled job details for job_no {job_no}: {str(e)}", exc_info=True)
-        return JSONResponse(
-            content={
-                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "message": f"Failed to get cancelled job details: {str(e)}",    
-                "success": False,
-                "result": {}
-            },
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
 
 @jobs_apis.patch("/{job_no}/mark_as_done/{type}", status_code=200)
 async def mark_job_as_done(

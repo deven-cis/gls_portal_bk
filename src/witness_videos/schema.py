@@ -1,5 +1,5 @@
 from typing import Optional
-from datetime import time
+from datetime import time, datetime
 from pydantic import BaseModel
 
 class WitnessVideoSchema(BaseModel):
@@ -10,6 +10,7 @@ class WitnessVideoSchema(BaseModel):
     end_time: Optional[time] = None
     file_name: Optional[str] = None
     file_path: Optional[str] = None
+    entered_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

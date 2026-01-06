@@ -1,10 +1,10 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import json
 from datetime import datetime, time as dt_time
-
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
-from fastapi.responses import JSONResponse
+from pathlib import Path
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status, Query
+from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
 
 from src.cases.models import Cases
@@ -22,7 +22,8 @@ from src.witnesses.schema import (
     WitnessSaveAllPayloadSchema,
     WitnessSchema,
 )
-
+from src.jobs.apis import get_witnesses_with_videos
+from src.jobs.apis import merge_videos_ffmpeg
 
 witnesses_api = APIRouter(prefix="/witnesses", tags=["witnesses"])
 
@@ -72,6 +73,7 @@ async def get_witnesses_list_by_job(
         )
 
         data = [WitnessSchema.model_validate(w).model_dump(mode="json") for w in witnesses]
+        logger.info(f"Witnesses data witnesse: {data}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -95,6 +97,61 @@ async def get_witnesses_list_by_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
+
+@witnesses_api.get("/{job_no}/download_witnesses_complete_video", status_code=200, response_model=None)
+async def download_witnesses_complete_video(
+    job_no: int,
+    witness_id: int,
+    download_all: bool = Query(False, description="If true, merge and download all videos"),
+    db: Session = Depends(get_db),
+) -> Union[JSONResponse, FileResponse]:
+
+    """
+    Download complete video for a job_no.
+    If witness_id is provided, downloads video for that specific witness only.
+    """
+    try:
+        witnesses = get_witnesses_with_videos(job_no, db, witness_id=witness_id)
+        if download_all:
+            video_paths = []
+            for witness in witnesses:
+                for video in witness.witness_vid:
+                    if video.file_path and Path(video.file_path).exists():
+                        video_paths.append(video.file_path)
+                
+                # Merge videos using helper function
+                merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
+                merged_filename = merged_file_path.name
+                
+                # Return the merged file for download
+                return FileResponse(
+                    path=str(merged_file_path),
+                    filename=merged_filename,
+                    media_type='video/mp4',
+                    headers={
+                        "Content-Disposition": f"attachment; filename={merged_filename}"
+                    }
+                )
+        else:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": "download_all is required",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to download witnesses complete video: {str(e)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 @witnesses_api.post("/create-name", response_model=WitnessCreateSchema, status_code=201)
 async def create_witness_name(

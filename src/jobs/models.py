@@ -56,7 +56,7 @@ class Jobs(Base):
     computed_status = Column(String(50), nullable=True, default="upcoming")
     actual_session_start_time = Column(DateTime, nullable=True)  
     actual_session_end_time = Column(DateTime, nullable=True)    
-    session_duration = Column(String(8), nullable=True)  # HH:MM:SS format
+    session_duration = Column(String(255), nullable=True)  # HHH:MM:SS format (supports durations up to 9999:59:59)
     session_completed = Column(Boolean, default=False)
     # mark_is_done = Column(Boolean, default=False)
     video_upload_deadline = Column(DateTime, nullable=True)

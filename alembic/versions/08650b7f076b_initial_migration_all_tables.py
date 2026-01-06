@@ -83,7 +83,7 @@ def upgrade() -> None:
     sa.Column('computed_status', sa.String(length=50), nullable=True),
     sa.Column('actual_session_start_time', sa.DateTime(), nullable=True),
     sa.Column('actual_session_end_time', sa.DateTime(), nullable=True),
-    sa.Column('session_duration', sa.String(length=8), nullable=True),
+    sa.Column('session_duration', sa.String(length=255), nullable=True),
     sa.Column('session_completed', sa.Boolean(), nullable=True),
     sa.Column('video_upload_deadline', sa.DateTime(), nullable=True),
     sa.Column('expected_video_count', sa.Integer(), nullable=True),

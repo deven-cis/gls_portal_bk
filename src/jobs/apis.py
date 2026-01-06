@@ -162,12 +162,13 @@ async def get_mark_as_done_status(
 
 
 
-def get_witnesses_with_videos(job_no: int, db: Session) -> List[Witnesses]:
+def get_witnesses_with_videos(job_no: int, db: Session, witness_id: Optional[int] = None) -> List[Witnesses]:
     """
     Helper function to get all witnesses with their videos for a job.
     Reusable across different endpoints.
+    If witness_id is provided, returns only that specific witness.
     """
-    return (
+    query = (
         db.query(Witnesses)
         .options(
             joinedload(Witnesses.witness_vid),
@@ -181,8 +182,13 @@ def get_witnesses_with_videos(job_no: int, db: Session) -> List[Witnesses]:
             Witnesses.job_no == job_no,
             Witnesses.is_archived == False
         )
-        .all()
     )
+    
+    # Filter by witness_id if provided
+    if witness_id is not None:
+        query = query.filter(Witnesses.id == witness_id)
+    
+    return query.all()
 
 
 def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
@@ -696,7 +702,8 @@ async def end_session(
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         seconds = total_seconds % 60
-        job.session_duration = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        # Format: H:MM:SS or HH:MM:SS (hours not padded to allow for long durations)
+        job.session_duration = f"{hours}:{minutes:02d}:{seconds:02d}"
         
         job.session_completed = True
         job.computed_status = JobStatusEnum.COMPLETED.value

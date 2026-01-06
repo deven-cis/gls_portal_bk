@@ -42,3 +42,6 @@ SETUP_COMPLETE.md
 .cursor/debug.log
 .debug.log
 .qodobot/
+
+.uploads/
+uploads/

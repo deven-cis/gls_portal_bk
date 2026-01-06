@@ -45,6 +45,7 @@ class WitnessNameUpdateSchema(BaseModel):
     witness_name: str
 
 class WitnessCreateSchema(BaseModel):
+    id:int
     witness_name: str
     read_on_text: str
     read_on_time: Optional[time] = None

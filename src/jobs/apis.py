@@ -108,6 +108,140 @@ async def get_cancelled_job_details(
         )
 
 
+@jobs_apis.get('/get/{job_no}/completed_details', status_code=200, response_model=None)
+async def get_completed_job_details(
+    job_no: int,
+    download_all: bool = Query(False, description="If true, merge and download all videos"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> Union[JSONResponse, FileResponse]:
+    """
+    Get completed job details including witnesses and attorneys.
+    If download_all=true, merges all videos using FFmpeg and returns as download.
+    """
+    try:
+        user_entered_by = get_context('entered_by')
+        logger.info(f"Getting completed job details for job_no {job_no} for user {user_entered_by}")
+        
+        # Get the job and verify it belongs to the user and is completed
+        job = (
+            db.query(Jobs)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .filter(Cases.is_archived == False)
+            .filter(Jobs.is_archived == False)
+            .filter(Jobs.job_no == job_no)
+            .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.entered_by == user_entered_by)
+            .filter(
+                (Jobs.computed_status == JobStatusEnum.COMPLETED.value)
+            )
+            .first()
+        )
+        logger.info(f"Job=--------------------------: {user_entered_by}")
+        if not job:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": f"Job with job_no {job_no} not found, not completed, or access denied",
+                    "success": False,
+                    "result": {}
+                },
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        # Use helper function to get witnesses with videos
+        witnesses = get_witnesses_with_videos(job_no, db, witness_id=None)
+        
+        attorneys = (
+            db.query(Attorneys)
+            .filter(
+                Attorneys.job_no == job_no,
+                Attorneys.is_archived == False
+            )
+            .all()
+        )
+        
+        # If download_all is requested, merge videos and return file
+        if download_all:
+            # Collect all video file paths
+            video_paths = []
+            for witness in witnesses:
+                for video in witness.witness_vid:
+                    if video.file_path and Path(video.file_path).exists():
+                        video_paths.append(video.file_path)
+            
+            if not video_paths:
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_404_NOT_FOUND,
+                        "message": "No video files found for this job",
+                        "success": False,
+                        "result": {}
+                    },
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Merge videos using helper function
+            merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
+            merged_filename = merged_file_path.name
+            
+            # Return the merged file for download
+            return FileResponse(
+                path=str(merged_file_path),
+                filename=merged_filename,
+                media_type='video/mp4',
+                headers={
+                    "Content-Disposition": f"attachment; filename={merged_filename}"
+                }
+            )
+        
+        # Normal response: return JSON with job details
+        witnesses_data = [
+            WitnessSchema.model_validate(witness).model_dump(mode='json') 
+            for witness in witnesses
+        ]
+        
+        attorneys_data = [
+            AttorneySchema.model_validate(attorney).model_dump(mode='json')
+            for attorney in attorneys
+        ]
+        
+        job_details = {
+            "job_no": job.job_no,
+            "witnesses": witnesses_data,
+            "attorneys": attorneys_data
+        }
+        
+        logger.info(
+            f"Found {len(witnesses_data)} witness(es) with videos and {len(attorneys_data)} attorney(s) "
+            f"for job_no {job_no}"
+        )
+        
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Job details retrieved successfully",
+                "success": True,
+                "result": job_details
+            },
+            status_code=status.HTTP_200_OK
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting completed job details for job_no {job_no}: {str(e)}", exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to get job details: {str(e)}",
+                "success": False,
+                "result": {}
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @jobs_apis.get("/get/{job_no}/{case_no}", status_code=200)  
 async def get_mark_as_done_status(
     job_no: int,
@@ -432,6 +566,7 @@ async def list_upcoming_jobs(
             .filter(Cases.is_archived == False)
             .filter(Jobs.is_archived == False)
             .filter(Cases.entered_by == user_entered_by)
+            .filter(Jobs.session_completed == False)
             .filter(Jobs.job_date >= datetime.combine(tomorrow, datetime.min.time()))
             .filter(Jobs.entered_by == user_entered_by)
             .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
@@ -955,140 +1090,6 @@ async def cancelled_and_completed_jobs(
         )
 
 
-@jobs_apis.get('/get/{job_no}/completed_details', status_code=200, response_model=None)
-async def get_completed_job_details(
-    job_no: int,
-    download_all: bool = Query(False, description="If true, merge and download all videos"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> Union[JSONResponse, FileResponse]:
-    """
-    Get completed job details including witnesses and attorneys.
-    If download_all=true, merges all videos using FFmpeg and returns as download.
-    """
-    try:
-        user_entered_by = get_context('entered_by')
-        logger.info(f"Getting completed job details for job_no {job_no} for user {user_entered_by}")
-        
-        # Get the job and verify it belongs to the user and is completed
-        job = (
-            db.query(Jobs)
-            .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.entered_by == user_entered_by)
-            .filter(
-                (Jobs.computed_status == JobStatusEnum.COMPLETED.value)
-            )
-            .first()
-        )
-        
-        if not job:
-            return JSONResponse(
-                content={
-                    "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Job with job_no {job_no} not found, not completed, or access denied",
-                    "success": False,
-                    "result": {}
-                },
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-
-        # Use helper function to get witnesses with videos
-        witnesses = get_witnesses_with_videos(job_no, db)
-        
-        attorneys = (
-            db.query(Attorneys)
-            .filter(
-                Attorneys.job_no == job_no,
-                Attorneys.is_archived == False
-            )
-            .all()
-        )
-        
-        # If download_all is requested, merge videos and return file
-        if download_all:
-            # Collect all video file paths
-            video_paths = []
-            for witness in witnesses:
-                for video in witness.witness_vid:
-                    if video.file_path and Path(video.file_path).exists():
-                        video_paths.append(video.file_path)
-            
-            if not video_paths:
-                return JSONResponse(
-                    content={
-                        "status_code": status.HTTP_404_NOT_FOUND,
-                        "message": "No video files found for this job",
-                        "success": False,
-                        "result": {}
-                    },
-                    status_code=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Merge videos using helper function
-            merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
-            merged_filename = merged_file_path.name
-            
-            # Return the merged file for download
-            return FileResponse(
-                path=str(merged_file_path),
-                filename=merged_filename,
-                media_type='video/mp4',
-                headers={
-                    "Content-Disposition": f"attachment; filename={merged_filename}"
-                }
-            )
-        
-        # Normal response: return JSON with job details
-        witnesses_data = [
-            WitnessSchema.model_validate(witness).model_dump(mode='json') 
-            for witness in witnesses
-        ]
-        
-        attorneys_data = [
-            AttorneySchema.model_validate(attorney).model_dump(mode='json')
-            for attorney in attorneys
-        ]
-        
-        job_details = {
-            "job_no": job.job_no,
-            "witnesses": witnesses_data,
-            "attorneys": attorneys_data
-        }
-        
-        logger.info(
-            f"Found {len(witnesses_data)} witness(es) with videos and {len(attorneys_data)} attorney(s) "
-            f"for job_no {job_no}"
-        )
-        
-        return JSONResponse(
-            content={
-                "status_code": status.HTTP_200_OK,
-                "message": "Job details retrieved successfully",
-                "success": True,
-                "result": job_details
-            },
-            status_code=status.HTTP_200_OK
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting completed job details for job_no {job_no}: {str(e)}", exc_info=True)
-        return JSONResponse(
-            content={
-                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "message": f"Failed to get job details: {str(e)}",
-                "success": False,
-                "result": {}
-            },
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
 
 @jobs_apis.patch("/{job_no}/mark_as_done/{type}", status_code=200)
 async def mark_job_as_done(
@@ -1196,6 +1197,7 @@ def _get_calendar_events_query(
         .options(joinedload(Jobs.case))
         .filter(Cases.is_archived == False)
         .filter(Jobs.is_archived == False)
+        .filter(Jobs.entered_by == user_entered_by)
         .filter(Cases.entered_by == user_entered_by)
         .filter(
             func.date(Jobs.job_date) >= start_date,

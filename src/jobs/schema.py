@@ -83,6 +83,7 @@ class CalendarEventSchema(BaseModel):
     startTime: str  # Format: "HH:MM"
     endTime: str  # Format: "HH:MM"
     status: Optional[str] = None  # "pending" if videos are pending
+    computed_status: Optional[str] = None
     videosUploaded: Optional[int] = None
     totalVideos: Optional[int] = None
     deadline: Optional[datetime] = None

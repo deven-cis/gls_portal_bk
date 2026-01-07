@@ -424,7 +424,6 @@ async def save_witness_and_videos(
                     ~WitnessVideos.is_archived,
                 ).first()
                 if not vid:
-                    # Client sent an id that doesn't exist (or is archived) — skip
                     continue
 
                 vid.last_modified_at = now
@@ -433,12 +432,24 @@ async def save_witness_and_videos(
                     vid.start_time = _normalize_time_string(item.start_time)
                 if item.end_time is not None:
                     vid.end_time = _normalize_time_string(item.end_time)
-                if item.file_index is not None and 0 <= item.file_index < len(files):
-                    file_name, file_path = await save_video_file(
-                        files[item.file_index], "witness_videos"
-                    )
-                    vid.file_name = file_name
-                    vid.file_path = file_path
+                
+                # Handle file update/clear/preserve
+                # Get the model dump with only explicitly set fields
+                item_dict = item.model_dump(exclude_unset=True)
+                
+                if 'file_index' in item_dict:
+                    # file_index was explicitly provided in the input
+                    if item.file_index is not None:
+                        # New file to upload
+                        if 0 <= item.file_index < len(files):
+                            file_name, file_path = await save_video_file(files[item.file_index], "witness_videos")
+                            vid.file_name = file_name
+                            vid.file_path = file_path
+                    else:
+                        # Explicitly set to null - clear the file
+                        vid.file_name = None
+                        vid.file_path = None
+                # If 'file_index' not in item_dict, it wasn't provided - preserve existing file
                 continue
 
             # Create new

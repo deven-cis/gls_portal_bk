@@ -157,6 +157,7 @@ def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
         startTime=start_time_str,
         endTime=end_time_str,
         status=status,
+        computed_status=job.computed_status,
         videosUploaded=video_status["videos_uploaded"] if video_status["total_videos"] > 0 else None,
         totalVideos=video_status["total_videos"] if video_status["total_videos"] > 0 else None,
         deadline=deadline,

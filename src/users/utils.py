@@ -31,7 +31,5 @@ def verify_password(plain_password: str, hashed_password: Union[bytes, memoryvie
         # Stored value is a stringified bytes literal; evaluate back to bytes.
         hashed_password = ast.literal_eval(hashed_password.decode())
 
-    logger.info(f'Hashed password: {hashed_password.hex()}')
     computed_hash = hashlib.sha512(plain_password.encode("utf-8")).digest()
-    logger.info(f'Computed hash: {computed_hash.hex()}')
     return hmac.compare_digest(computed_hash, hashed_password)

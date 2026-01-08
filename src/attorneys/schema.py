@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel
+from datetime import datetime
 
 
 class AttorneySchema(BaseModel):
@@ -11,6 +12,7 @@ class AttorneySchema(BaseModel):
     order_details: str
     file_name: Optional[str] = None
     file_name_path: Optional[str] = None
+    entered_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

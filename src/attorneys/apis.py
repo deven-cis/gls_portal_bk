@@ -27,7 +27,7 @@ async def list_attorneys_by_job(
         ).all()
         
         # Serialize all attorneys to Pydantic schemas
-        attorneys_data = [AttorneySchema.model_validate(attorney).model_dump() for attorney in attorneys]
+        attorneys_data = [AttorneySchema.model_validate(attorney).model_dump(mode='json') for attorney in attorneys]
         
         return JSONResponse(
             content={
@@ -97,7 +97,7 @@ async def create_attorney(
                 "status_code": status.HTTP_201_CREATED,
                 "message": "Attorney created successfully",
                 "success": True,
-                "result": attorney_data.model_dump()
+                "result": attorney_data.model_dump(mode='json')
             },
             status_code=status.HTTP_201_CREATED
         )
@@ -239,7 +239,7 @@ async def update_attorney(
                 "status_code": status.HTTP_200_OK,
                 "message": message,
                 "success": True,
-                "result": attorney_data.model_dump()
+                "result": attorney_data.model_dump(mode='json')
             },
             status_code=status.HTTP_200_OK
         )

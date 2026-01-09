@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 
@@ -14,8 +14,12 @@ class AttorneySchema(BaseModel):
     file_name_path: Optional[str] = None
     entered_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes = True,
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
+    )
 
 
 class AttorneyCreateSchema(BaseModel):

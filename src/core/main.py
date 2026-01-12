@@ -6,18 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 # from src.users.routes import user_router
-from src.auth.routes import auth_router
+from src.auth import auth_router
 from src.core.config import config
-from src.cases.routes import cases_router
+from src.cases import cases_router
 from src.jobs.apis import jobs_apis
-from src.attorneys.routes import attorneys_router
-from src.billings.routes import billings_router
-from src.equipment_time.routes import equipment_time_router
-from src.additional_documents.routes import additional_documents_router
-from src.witnesses.routes import witnesses_api
-from src.core.relationships import init_relationships
-from src.users.apis import users_router
-from src.job_assignment.apis import job_assignment_apis
+from src.attorneys import attorneys_router
+from src.billings import billings_router
+from src.equipment_time import equipment_time_router
+from src.witnesses import witnesses_api
+from src.users import users_router
+from src.job_assignment import job_assignment_apis
 
 app = FastAPI(
     title=config.APPLICATION_NAME,
@@ -41,8 +39,6 @@ app.add_middleware(
     allow_headers=["*"],
     # expose_headers=["Content-Disposition"]
 )
-
-init_relationships()
 
 # Include auth router with /api prefix
 app.include_router(
@@ -84,11 +80,6 @@ app.include_router(
 app.include_router(
     equipment_time_router,
     tags=['equipment-time']
-)
-
-app.include_router(
-    additional_documents_router,
-    tags=['additional-documents']
 )
 
 app.include_router(

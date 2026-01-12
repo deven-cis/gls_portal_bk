@@ -1,17 +1,12 @@
 from typing import List, Optional, Union
-
 import json
 from datetime import datetime, time as dt_time
 from pathlib import Path
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status, Query
+from fastapi import status, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
-
-from src.cases.models import Cases
 from src.core.context import get_context
-from src.core.database import get_db
 from src.core.logger import logger
-from src.jobs.models import Jobs
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
 from src.core.file_utils import save_video_file
@@ -22,16 +17,9 @@ from src.witnesses.schema import (
     WitnessSaveAllPayloadSchema,
     WitnessSchema,
 )
-from src.jobs.apis import get_witnesses_with_videos
-from src.jobs.apis import merge_videos_ffmpeg
 
-witnesses_api = APIRouter(prefix="/witnesses", tags=["witnesses"])
 
 def _normalize_time_string(value: Optional[str]) -> Optional[str]:
-    """
-    Accepts 'HH:MM' or 'HH:MM:SS' and returns normalized 'HH:MM:SS'.
-    Returns None for empty/invalid values.
-    """
     if value is None:
         return None
     if not isinstance(value, str):
@@ -39,26 +27,16 @@ def _normalize_time_string(value: Optional[str]) -> Optional[str]:
     value = value.strip()
     if not value:
         return None
-    # Allow HH:MM by adding seconds
     if value.count(":") == 1:
         value = f"{value}:00"
     try:
         t = dt_time.fromisoformat(value)
-        return str(t)  # normalized HH:MM:SS
+        return str(t)
     except Exception:
         return None
 
 
-@witnesses_api.get("/list/{job_no}", status_code=200)
-async def get_witnesses_list_by_job(
-    job_no: int,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """
-    Get all witnesses for a job_no and include associated witness videos.
-    Response shape matches frontend convention:
-      { status_code, message, success, result: [...] }
-    """
+async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
         witnesses: List[Witnesses] = (
             db.query(Witnesses)
@@ -98,19 +76,16 @@ async def get_witnesses_list_by_job(
         )
 
 
-@witnesses_api.get("/{job_no}/download_witnesses_complete_video", status_code=200, response_model=None)
 async def download_witnesses_complete_video(
     job_no: int,
     witness_id: int,
-    download_all: bool = Query(False, description="If true, merge and download all videos"),
-    db: Session = Depends(get_db),
+    download_all: bool,
+    db: Session,
 ) -> Union[JSONResponse, FileResponse]:
-
-    """
-    Download complete video for a job_no.
-    If witness_id is provided, downloads video for that specific witness only.
-    """
     try:
+        from src.jobs.apis import get_witnesses_with_videos
+        from src.jobs.apis import merge_videos_ffmpeg
+        
         witnesses = get_witnesses_with_videos(job_no, db, witness_id=witness_id)
         if download_all:
             video_paths = []
@@ -119,11 +94,9 @@ async def download_witnesses_complete_video(
                     if video.file_path and Path(video.file_path).exists():
                         video_paths.append(video.file_path)
                 
-                # Merge videos using helper function
                 merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
                 merged_filename = merged_file_path.name
                 
-                # Return the merged file for download
                 return FileResponse(
                     path=str(merged_file_path),
                     filename=merged_filename,
@@ -153,16 +126,15 @@ async def download_witnesses_complete_video(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-@witnesses_api.post("/create-name", response_model=WitnessCreateSchema, status_code=201)
-async def create_witness_name(
-    data: CreateWitnessFrontSchema,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """
-    Create witness row with read_on/off template text. Time fields are left empty (nullable).
-    Returns JSONResponse wrapper expected by frontend.
-    """
+
+async def create_witness_name(data: CreateWitnessFrontSchema, db: Session) -> JSONResponse:
     try:
+        import importlib
+        jobs_models = importlib.import_module('src.jobs.models')
+        cases_models = importlib.import_module('src.cases.models')
+        Jobs = jobs_models.Jobs
+        Cases = cases_models.Cases
+        
         job = db.query(Jobs).filter(Jobs.job_no == data.job_no).first()
         if not job:
             return JSONResponse(
@@ -218,15 +190,11 @@ async def create_witness_name(
         )
 
 
-@witnesses_api.patch("/name/{witness_id}", status_code=200)
 async def update_witness_name(
     witness_id: int,
     payload: WitnessNameUpdateSchema,
-    db: Session = Depends(get_db),
+    db: Session,
 ) -> JSONResponse:
-    """
-    Update only witness_name (used by inline edit Save button).
-    """
     entered_by = get_context("entered_by") or 0
     now = datetime.utcnow()
 
@@ -288,11 +256,10 @@ async def update_witness_name(
         )
 
 
-@witnesses_api.post("/save-all", status_code=200)
 async def save_witness_and_videos(
-    payload: str = Form(...),
-    files: List[UploadFile] = File(default=[]),
-    db: Session = Depends(get_db),
+    payload: str,
+    files: List[UploadFile],
+    db: Session,
 ) -> JSONResponse:
     entered_by = get_context("entered_by") or 0
     now = datetime.utcnow()
@@ -312,7 +279,6 @@ async def save_witness_and_videos(
         )
 
     try:
-        # Update-only: Save button updates existing witness + videos
         if not data.witness_id:
             return JSONResponse(
                 content={
@@ -339,7 +305,6 @@ async def save_witness_and_videos(
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        # Optional safety: ensure frontend is saving against correct job
         if witness.job_no != data.job_no:
             return JSONResponse(
                 content={
@@ -351,12 +316,10 @@ async def save_witness_and_videos(
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Audit (Base columns are NOT NULL)
         witness.last_modified_at = now
         witness.last_modified_by = entered_by
 
         if data.witness_name is not None:
-            # DB column is NOT NULL
             new_name = str(data.witness_name).strip()
             if not new_name:
                 return JSONResponse(
@@ -377,7 +340,6 @@ async def save_witness_and_videos(
         if data.read_off_text is not None:
             witness.read_off_text = data.read_off_text
 
-        # Times stored in DB as varchar; normalize to HH:MM:SS
         if data.actual_start_time is not None:
             witness.actual_start_time = _normalize_time_string(data.actual_start_time)
         if data.actual_end_time is not None:
@@ -387,8 +349,6 @@ async def save_witness_and_videos(
         if data.read_off_time is not None:
             witness.read_off_time = _normalize_time_string(data.read_off_time)
 
-        # Optional "sync" mode: if UI sends the complete list of remaining videos,
-        # archive any existing videos not present in payload (supports empty -> delete all).
         if getattr(data, "replace_videos", False):
             keep_ids = {v.id for v in data.videos if v.id and not v.delete}
             existing_videos = db.query(WitnessVideos).filter(
@@ -401,9 +361,7 @@ async def save_witness_and_videos(
                     ev.last_modified_at = now
                     ev.last_modified_by = entered_by
 
-        # Upsert videos
         for item in data.videos:
-            # Delete
             if item.delete and item.id:
                 vid = db.query(WitnessVideos).filter(
                     WitnessVideos.id == item.id,
@@ -416,7 +374,6 @@ async def save_witness_and_videos(
                     vid.last_modified_by = entered_by
                 continue
 
-            # Update existing
             if item.id:
                 vid = db.query(WitnessVideos).filter(
                     WitnessVideos.id == item.id,
@@ -433,26 +390,19 @@ async def save_witness_and_videos(
                 if item.end_time is not None:
                     vid.end_time = _normalize_time_string(item.end_time)
                 
-                # Handle file update/clear/preserve
-                # Get the model dump with only explicitly set fields
                 item_dict = item.model_dump(exclude_unset=True)
                 
                 if 'file_index' in item_dict:
-                    # file_index was explicitly provided in the input
                     if item.file_index is not None:
-                        # New file to upload
                         if 0 <= item.file_index < len(files):
                             file_name, file_path = await save_video_file(files[item.file_index], "witness_videos")
                             vid.file_name = file_name
                             vid.file_path = file_path
                     else:
-                        # Explicitly set to null - clear the file
                         vid.file_name = None
                         vid.file_path = None
-                # If 'file_index' not in item_dict, it wasn't provided - preserve existing file
                 continue
 
-            # Create new
             start_time_str = _normalize_time_string(item.start_time)
             end_time_str = _normalize_time_string(item.end_time)
             file_name = None
@@ -475,10 +425,8 @@ async def save_witness_and_videos(
             )
             db.add(new_vid)
 
-        # One commit for witness + videos
         db.commit()
 
-        # Re-fetch with non-archived videos so response includes them
         witness_out: Witnesses = (
             db.query(Witnesses)
             .options(
@@ -515,14 +463,7 @@ async def save_witness_and_videos(
         )
 
 
-@witnesses_api.delete("/delete/{witness_id}", status_code=200)
-async def delete_witness_by_id(
-    witness_id: int,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """
-    Archive witness and all associated witness videos (soft-delete).
-    """
+async def delete_witness_by_id(witness_id: int, db: Session) -> JSONResponse:
     entered_by = get_context("entered_by") or 0
     now = datetime.utcnow()
 
@@ -542,7 +483,6 @@ async def delete_witness_by_id(
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        # Archive related videos
         videos = db.query(WitnessVideos).filter(
             WitnessVideos.wit_no == witness_id,
             ~WitnessVideos.is_archived,
@@ -552,7 +492,6 @@ async def delete_witness_by_id(
             v.last_modified_at = now
             v.last_modified_by = entered_by
 
-        # Archive witness
         witness.is_archived = True
         witness.last_modified_at = now
         witness.last_modified_by = entered_by
@@ -580,6 +519,3 @@ async def delete_witness_by_id(
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-
-
-

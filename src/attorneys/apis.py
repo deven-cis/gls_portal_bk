@@ -1,32 +1,22 @@
 from typing import List, Optional
-from fastapi import Depends, HTTPException, status, UploadFile, File, Form, APIRouter, Request
+from fastapi import Request, UploadFile
 from fastapi.responses import JSONResponse
 from pathlib import Path
 from sqlalchemy.orm import Session
-from src.auth.utils import get_current_user
 from src.attorneys.models import Attorneys
-from src.jobs.models import Jobs
 from src.core.file_utils import save_file
 from src.attorneys.schema import AttorneySchema
 from src.core.logger import logger
-from src.core.database import get_db
-
-attorneys_router = APIRouter(prefix='/attorneys', tags=['attorneys'])
+from fastapi import status
 
 
-@attorneys_router.get('/list/{job_no}', status_code=200)
-async def list_attorneys_by_job(
-    job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
+async def list_attorneys_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
         attorneys = db.query(Attorneys).filter(
             Attorneys.job_no == job_no,
             Attorneys.is_archived == False
         ).all()
         
-        # Serialize all attorneys to Pydantic schemas
         attorneys_data = [AttorneySchema.model_validate(attorney).model_dump(mode='json') for attorney in attorneys]
         
         return JSONResponse(
@@ -50,17 +40,17 @@ async def list_attorneys_by_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@attorneys_router.post('/create', status_code=201)
+
 async def create_attorney(
-    job_no: int = Form(...),
-    attorney_name: str = Form(...),
-    firm_name: str = Form(...),
-    notes: str = Form(...),
-    order_details: str = Form(...),
-    document: Optional[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user),
-):
+    job_no: int,
+    attorney_name: str,
+    firm_name: str,
+    notes: str,
+    order_details: str,
+    document: Optional[UploadFile] = None,
+) -> JSONResponse:
     try:
+        from src.jobs.models import Jobs
         job = Jobs.get_queryset().filter(Jobs.job_no == job_no).first()
         if not job:
             return JSONResponse(
@@ -74,7 +64,6 @@ async def create_attorney(
         file_name = None
         file_name_path = None
         
-        # Handle single document upload
         if document and document.filename:
             file_name, file_name_path = await save_file(document, "attorneys")
         
@@ -89,7 +78,6 @@ async def create_attorney(
         )
         saved_attorney = Attorneys.save(attorney)
         
-        # Serialize SQLAlchemy model to Pydantic schema
         attorney_data = AttorneySchema.model_validate(saved_attorney)
         
         return JSONResponse(
@@ -109,29 +97,18 @@ async def create_attorney(
                 "success": False,
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )   
+        )
 
 
-@attorneys_router.put('/update/{attorney_id}', status_code=200)
 async def update_attorney(
     attorney_id: int,
     request: Request,
-    attorney_name: Optional[str] = Form(None),
-    firm_name: Optional[str] = Form(None),
-    notes: Optional[str] = Form(None),
-    order_details: Optional[str] = Form(None),
-    document: Optional[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user),
-) -> dict:
-    """
-    Update attorney. Only provided fields will be updated, others remain unchanged.
-    Frontend sends: attorney_name, firm_name, notes, order_details, document (optional)
-    
-    Document handling:
-    - If document file is sent with filename → upload/replace document
-    - If document field is sent but empty (no file) → remove existing document
-    - If document field is not sent at all → keep existing document unchanged
-    """
+    attorney_name: Optional[str] = None,
+    firm_name: Optional[str] = None,
+    notes: Optional[str] = None,
+    order_details: Optional[str] = None,
+    document: Optional[UploadFile] = None,
+) -> JSONResponse:
     try:
         db = Attorneys.get_session()
         attorney = db.query(Attorneys).filter(
@@ -150,16 +127,12 @@ async def update_attorney(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Read form data to check if document field was explicitly sent
         form_data = await request.form()
         document_field_sent = 'document' in form_data
         
-        # Track which fields were updated
         fields_updated = []
         
-        # Update only fields that are provided (not None)
         if attorney_name is not None:
-            # Handle empty strings - allow clearing the field
             if isinstance(attorney_name, str):
                 attorney.attorney_name = attorney_name.strip() if attorney_name.strip() else attorney_name
             else:
@@ -187,12 +160,8 @@ async def update_attorney(
                 attorney.order_details = order_details
             fields_updated.append("order_details")
         
-        # Handle document: upload, remove, or keep unchanged
         if document_field_sent:
-            # Document field was explicitly sent in form
             if document and document.filename:
-                # New file uploaded - replace existing document
-                # Delete old file if exists
                 if attorney.file_name_path:
                     try:
                         old_file_path = Path(attorney.file_name_path)
@@ -202,13 +171,11 @@ async def update_attorney(
                     except Exception as e:
                         logger.warning(f"Failed to delete old file {attorney.file_name_path}: {str(e)}")
                 
-                # Save new file
                 file_name, file_name_path = await save_file(document, "attorneys")
                 attorney.file_name = file_name
                 attorney.file_name_path = file_name_path
                 fields_updated.append("document")
             else:
-                # Document field sent but no file (empty) - remove existing document
                 if attorney.file_name_path:
                     try:
                         file_path = Path(attorney.file_name_path)
@@ -221,14 +188,11 @@ async def update_attorney(
                 attorney.file_name = None
                 attorney.file_name_path = None
                 fields_updated.append("document")
-        # If document_field_sent is False, document field was not sent - keep existing document unchanged
         
         attorney.save()
         
-        # Serialize SQLAlchemy model to Pydantic schema
         attorney_data = AttorneySchema.model_validate(attorney)
         
-        # Prepare response message
         if fields_updated:
             message = f"Attorney updated successfully. Fields updated: {', '.join(fields_updated)}"
         else:
@@ -243,8 +207,6 @@ async def update_attorney(
             },
             status_code=status.HTTP_200_OK
         )
-    except HTTPException:
-        raise
     except Exception as e:
         return JSONResponse(
             content={
@@ -257,11 +219,7 @@ async def update_attorney(
         )
 
 
-@attorneys_router.delete('/delete/{attorney_id}', status_code=200)
-async def delete_attorney(
-    attorney_id: int,
-    current_user: dict = Depends(get_current_user),
-) -> dict:
+async def delete_attorney(attorney_id: int) -> JSONResponse:
     try:
         attorney = Attorneys.get_queryset().filter(Attorneys.id == attorney_id, Attorneys.is_archived == False).first()
         if not attorney:

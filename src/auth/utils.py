@@ -8,7 +8,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.config import config
 from src.core.logger import logger
-from src.users.models import Users
 from src.core.context import set_context
 from src.core.database import get_db
 
@@ -30,9 +29,7 @@ def create_forget_password_token(data: dict, expiration_delta: int = None):
     return forget_password_token
 
 def verify_token(token: str):
-    """
-    Verify Token
-    """
+    from src.users.models import Users
     decoded_data = decode_token(token)
  
     if datetime.now() > datetime.fromisoformat(decoded_data.get('expire')):
@@ -130,11 +127,10 @@ def decode_token(token: str, token_type: str = None):
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     try:
-        # Decode the token (this validates the signature and expiration)
+        from src.users.models import Users
         set_context(db=db)
         decoded_data = decode_token(credentials.credentials)
         
-        # Get user from database
         user = Users.get(decoded_data.get('id'))
         if not user:
             logger.warning(f"User not found with ID: {decoded_data.get('id')}")

@@ -1,49 +1,23 @@
 from typing import List, Optional
 from pathlib import Path
 from decimal import Decimal
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    status,
-    UploadFile,
-    File,
-    Form,
-    Request,
-)
+from datetime import datetime
+from fastapi import HTTPException, status, UploadFile, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-
-from src.auth.utils import get_current_user
 from src.equipment_time.models import EquipmentTime
 from src.equipment_time.schema import (
     EquipmentTimeSchema,
     EquipmentTimeWithDocumentsSchema,
     AdditionalDocumentResponseSchema,
 )
-from src.jobs.models import Jobs
 from src.additional_documents.models import AdditionalDocuments
 from src.core.file_utils import save_multiple_files
 from src.core.logger import logger
-from src.core.database import get_db
 from src.core.context import get_context
-from datetime import datetime
 
 
-equipment_time_router = APIRouter(prefix="/equipment-time", tags=["equipment-time"])
-
-
-@equipment_time_router.get("/get/{job_no}", status_code=200)
-async def get_equipment_time_by_job(
-    job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """
-    Get equipment_time for a specific job with all associated documents.
-    Most common use case - frontend passes job_no to get equipment_time info.
-    Returns complete equipment_time information including all uploaded documents.
-    """
+async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
         equipment_time = db.query(EquipmentTime).filter(
             EquipmentTime.job_no == job_no,
@@ -61,7 +35,6 @@ async def get_equipment_time_by_job(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Get all associated additional documents for this equipment_time
         documents = db.query(AdditionalDocuments).filter(
             AdditionalDocuments.equipment_time_id == equipment_time.id,
             AdditionalDocuments.is_archived == False
@@ -71,7 +44,6 @@ async def get_equipment_time_by_job(
             f"Found {len(documents)} document(s) for equipment_time_id {equipment_time.id}, job_no {job_no}"
         )
         
-        # Serialize documents
         documents_data = [
             AdditionalDocumentResponseSchema.model_validate(doc).model_dump()
             for doc in documents
@@ -79,15 +51,12 @@ async def get_equipment_time_by_job(
         
         logger.info(f"Serialized {len(documents_data)} document(s) successfully")
         
-        # Convert time_after to string if it exists
         time_after_str = None
         if equipment_time.time_after:
             time_after_str = str(equipment_time.time_after)
         
-        # Convert parking_cost Decimal to string for JSON serialization
         parking_cost_str = str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00"
         
-        # Create complete equipment_time response with documents
         equipment_time_with_docs = EquipmentTimeWithDocumentsSchema(
             id=equipment_time.id,
             job_no=equipment_time.job_no,
@@ -126,27 +95,19 @@ async def get_equipment_time_by_job(
         )
 
 
-@equipment_time_router.post("/create", status_code=201)
 async def create_equipment_time(
-    job_no: int = Form(...),
-    laptop_used: bool = Form(False),
-    pip_used: bool = Form(False),
-    exhibit_tech: bool = Form(False),
-    parking_cost: Optional[str] = Form(None),
-    time_after: Optional[str] = Form(None),
-    files: List[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    job_no: int,
+    laptop_used: bool,
+    pip_used: bool,
+    exhibit_tech: bool,
+    parking_cost: Optional[str],
+    time_after: Optional[str],
+    files: Optional[List[UploadFile]],
+    db: Session,
 ) -> JSONResponse:
-    """
-    Create equipment_time for a job.
-    
-    - Associates equipment_time with a job via job_no
-    - Supports optional additional documents (multiple files)
-    - Returns structured JSON with status_code, message, success, result
-    """
     try:
         logger.info(f"Creating equipment_time for files: {files}")
+        from src.jobs.models import Jobs
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
             return JSONResponse(
@@ -159,12 +120,8 @@ async def create_equipment_time(
                 status_code=status.HTTP_404_NOT_FOUND,
             )
         
-        # Convert parking_cost string to Decimal
         parking_cost_decimal = Decimal(parking_cost) if parking_cost else Decimal('0.00')
         
-
-        
-        # Create equipment_time using the same db session
         equipment_time = EquipmentTime(
             job_no=job_no,
             laptop_used=laptop_used,
@@ -178,13 +135,11 @@ async def create_equipment_time(
         
         logger.info(f"Created equipment_time with id={equipment_time.id} for job_no={job_no}")
         
-        # Handle multiple additional documents
         documents_created = 0
         logger.info(f"Files received: {files is not None}, Count: {len(files) if files else 0}")
         
         if files and len(files) > 0:
             try:
-                # Filter out empty files
                 valid_files = [f for f in files if f and f.filename]
                 logger.info(f"Valid files to save: {len(valid_files)}")
                 
@@ -210,11 +165,9 @@ async def create_equipment_time(
                     logger.warning("No valid files found in files list")
             except Exception as file_error:
                 logger.error(f"Error processing files: {str(file_error)}", exc_info=True)
-                # Don't fail the entire request if file saving fails
         else:
             logger.info("No files provided for equipment_time creation")
         
-        # Always query for documents to include in response (in case they were saved but counter didn't increment)
         created_documents = db.query(AdditionalDocuments).filter(
             AdditionalDocuments.equipment_time_id == equipment_time.id,
             AdditionalDocuments.is_archived == False
@@ -222,21 +175,17 @@ async def create_equipment_time(
         
         logger.info(f"Found {len(created_documents)} document(s) in database for equipment_time_id {equipment_time.id}")
         
-        # Serialize documents
         documents_data = [
             AdditionalDocumentResponseSchema.model_validate(doc).model_dump()
             for doc in created_documents
         ]
         
-        # Convert time_after to string for response
         time_after_str = None
         if equipment_time.time_after:
             time_after_str = str(equipment_time.time_after)
         
-        # Convert parking_cost Decimal to string for JSON serialization
         parking_cost_str = str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00"
         
-        # Create response with documents
         equipment_time_with_docs = EquipmentTimeWithDocumentsSchema(
             id=equipment_time.id,
             job_no=equipment_time.job_no,
@@ -278,24 +227,17 @@ async def create_equipment_time(
         )
 
 
-@equipment_time_router.put("/update/{equipment_time_id}", status_code=200)
 async def update_equipment_time(
     equipment_time_id: int,
     request: Request,
-    laptop_used: Optional[str] = Form(None),
-    pip_used: Optional[str] = Form(None),
-    exhibit_tech: Optional[str] = Form(None),
-    parking_cost: Optional[str] = Form(None),
-    time_after: Optional[str] = Form(None),
-    files: List[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """
-    Update equipment_time. Only provided fields will be updated, others remain unchanged.
-    Frontend sends: laptop_used, pip_used, exhibit_tech, parking_cost, time_after,
-    files (new uploads), remove_documents (IDs to remove)
-    """
+    laptop_used: Optional[str],
+    pip_used: Optional[str],
+    exhibit_tech: Optional[str],
+    parking_cost: Optional[str],
+    time_after: Optional[str],
+    files: Optional[List[UploadFile]],
+    db: Session,
+) -> JSONResponse:
     try:
         equipment_time = db.query(EquipmentTime).filter(
             EquipmentTime.id == equipment_time_id,
@@ -313,10 +255,8 @@ async def update_equipment_time(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Track which fields were updated
         fields_updated = []
         
-        # Update only fields that are provided (not None)
         if laptop_used is not None:
             equipment_time.laptop_used = laptop_used.lower() in ['true', '1', 'yes']
             fields_updated.append("laptop_used")
@@ -343,7 +283,6 @@ async def update_equipment_time(
                 equipment_time.time_after = time_after
             fields_updated.append("time_after")
         
-        # Handle document removal - read from form data to get all values with same key
         form_data = await request.form()
         remove_documents = form_data.getlist("remove_documents") if "remove_documents" in form_data else []
         
@@ -359,7 +298,6 @@ async def update_equipment_time(
                     ).first()
                     
                     if doc:
-                        # Delete physical file if exists
                         if doc.file_path:
                             try:
                                 file_path = Path(doc.file_path)
@@ -369,7 +307,6 @@ async def update_equipment_time(
                             except Exception as e:
                                 logger.warning(f"Failed to delete file {doc.file_path}: {str(e)}")
                         
-                        # Archive the document
                         doc.is_archived = True
                         doc.save()
                         documents_removed += 1
@@ -380,7 +317,6 @@ async def update_equipment_time(
         if documents_removed > 0:
             fields_updated.append(f"documents (removed {documents_removed})")
         
-        # Handle new document uploads
         documents_uploaded = 0
         if files:
             saved_files = await save_multiple_files(files, "equipment_time")
@@ -397,7 +333,6 @@ async def update_equipment_time(
                     entered_at=datetime.now(),
                     last_modified_at=datetime.now(),
                 )
-                # Use the same db session to ensure documents are visible immediately
                 db.add(doc)
                 db.commit()
                 db.refresh(doc)
@@ -407,18 +342,14 @@ async def update_equipment_time(
         if documents_uploaded > 0:
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
         
-        # Save equipment_time changes
         equipment_time.save()
         
-        # Convert time_after to string for response
         time_after_str = None
         if equipment_time.time_after:
             time_after_str = str(equipment_time.time_after)
         
-        # Convert parking_cost Decimal to string for JSON serialization
         parking_cost_str = str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00"
         
-        # Serialize SQLAlchemy model to Pydantic schema
         equipment_time_data = EquipmentTimeSchema(
             id=equipment_time.id,
             job_no=equipment_time.job_no,
@@ -429,7 +360,6 @@ async def update_equipment_time(
             time_after=time_after_str
         )
         
-        # Prepare response message
         if fields_updated:
             message = f"Equipment time updated successfully. Fields updated: {', '.join(fields_updated)}"
         else:
@@ -459,12 +389,7 @@ async def update_equipment_time(
         )
 
 
-@equipment_time_router.delete("/delete/{equipment_time_id}", status_code=200)
-async def delete_equipment_time(
-    equipment_time_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
+async def delete_equipment_time(equipment_time_id: int, db: Session) -> JSONResponse:
     try:
         equipment_time = db.query(EquipmentTime).filter(
             EquipmentTime.id == equipment_time_id,

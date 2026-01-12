@@ -1,26 +1,12 @@
-from typing import List
-
-from fastapi import Depends
-
-from src.auth.utils import get_current_user
-from src.cases.models import Cases
-from src.users.models import Users
-from src.core.logger import logger
-from src.core.context import get_context
 from fastapi import HTTPException, status
-from src.cases.schema import CaseEditSchema, CaseSchema, GetCaseSchema, MarkCaseAsDoneSchema
-from src.core.database import get_db
-from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from src.cases.models import Cases
+from src.cases.schema import CaseEditSchema, CaseSchema, GetCaseSchema
+from src.core.logger import logger
 
-cases_router = APIRouter(prefix="/case", tags=["case"])
 
-@cases_router.get("/list", status_code=200)
-async def list_cases(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> JSONResponse:
+async def list_cases(db: Session) -> JSONResponse:
     result = db.query(Cases).filter(Cases.is_archived == False).all()
     return JSONResponse(
         content={
@@ -32,8 +18,8 @@ async def list_cases(
         status_code=status.HTTP_200_OK
     )
 
-@cases_router.get("/get/{case_id}", status_code=200)
-async def get_case(case_id: int, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> JSONResponse:
+
+async def get_case(case_id: int, db: Session) -> JSONResponse:
     try:
         logger.info(f"Retrieving case {case_id}")
         case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
@@ -70,13 +56,8 @@ async def get_case(case_id: int, current_user: dict = Depends(get_current_user),
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@cases_router.put("/edit/{case_id}", status_code=200)
-async def edit_case(
-    case_id: int, 
-    case_data: CaseEditSchema, 
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> JSONResponse:
+
+async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSONResponse:
     try:
         case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
         if not case:
@@ -91,7 +72,6 @@ async def edit_case(
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Get ONLY the fields user actually sent (exclude unset and None values)
         update_data = case_data.model_dump(exclude_unset=True, exclude_none=True)
         
         if not update_data:
@@ -105,7 +85,6 @@ async def edit_case(
                 status_code=status.HTTP_200_OK
             )
         
-        # Update only the provided fields
         for field, value in update_data.items():
             if field == 'case_short_name' and isinstance(value, str):
                 value = value.strip()
@@ -114,7 +93,6 @@ async def edit_case(
         case.save()
         logger.info(f'Case {case_id} updated successfully')
 
-        # Return the updated values in the format expected by frontend
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -136,7 +114,3 @@ async def edit_case(
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-
-    
-
-

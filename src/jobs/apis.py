@@ -28,14 +28,14 @@ from src.jobs.models import JobStatusEnum, CancelReasonEnum
 from src.jobs.utils import (
     job_to_calendar_event,
     get_date_range_for_month,
-    get_date_range_for_week
+    get_date_range_for_week,
+    get_video_upload_status
 )
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
-
 jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
 
 
@@ -297,11 +297,6 @@ async def get_mark_as_done_status(
 
 
 def get_witnesses_with_videos(job_no: int, db: Session, witness_id: Optional[int] = None) -> List[Witnesses]:
-    """
-    Helper function to get all witnesses with their videos for a job.
-    Reusable across different endpoints.
-    If witness_id is provided, returns only that specific witness.
-    """
     query = (
         db.query(Witnesses)
         .options(
@@ -318,7 +313,6 @@ def get_witnesses_with_videos(job_no: int, db: Session, witness_id: Optional[int
         )
     )
     
-    # Filter by witness_id if provided
     if witness_id is not None:
         query = query.filter(Witnesses.id == witness_id)
     
@@ -326,42 +320,31 @@ def get_witnesses_with_videos(job_no: int, db: Session, witness_id: Optional[int
 
 
 def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
-    """
-    Helper function to merge multiple video files using FFmpeg.
-    Returns the path to the merged video file.
-    """
     if not video_paths:
         raise ValueError("No video paths provided")
     
-    # Create temporary directory for merged video
     temp_dir = Path(tempfile.gettempdir())
     merged_filename = f"job_{job_no}_all_videos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
     merged_file_path = temp_dir / merged_filename
     
-    # Create FFmpeg concat file list
     concat_file = temp_dir / f"concat_list_{job_no}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     
     try:
-        # Get project root directory (parent of src directory)
         project_root = Path(__file__).resolve().parent.parent.parent
         
         valid_video_count = 0
         with open(concat_file, 'w') as f:
             for video_path in video_paths:
-                # Convert relative paths to absolute paths
                 if not os.path.isabs(video_path):
-                    # If path is relative, resolve it relative to project root
                     abs_video_path = (project_root / video_path).resolve()
                 else:
                     abs_video_path = Path(video_path).resolve()
                 
-                # Check if file exists
                 if not abs_video_path.exists():
                     logger.warning(f"Video file not found: {abs_video_path} (original: {video_path})")
                     continue
                 
-                # Escape single quotes and wrap in quotes for FFmpeg
-                # Use absolute path for FFmpeg
+                
                 escaped_path = str(abs_video_path).replace("'", "'\\''")
                 f.write(f"file '{escaped_path}'\n")
                 valid_video_count += 1
@@ -372,17 +355,13 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
                 detail="No valid video files found to merge"
             )
         
-        # Use FFmpeg to concatenate videos
-        # -f concat: use concat demuxer
-        # -safe 0: allow unsafe file paths
-        # -c copy: copy streams without re-encoding (faster)
         ffmpeg_cmd = [
             'ffmpeg',
             '-f', 'concat',
             '-safe', '0',
             '-i', str(concat_file),
             '-c', 'copy',
-            '-y',  # Overwrite output file if exists
+            '-y',
             str(merged_file_path)
         ]
         
@@ -398,7 +377,6 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg error merging videos: {e.stderr}", exc_info=True)
-        # Try with re-encoding if copy fails
         try:
             logger.info("Retrying with re-encoding...")
             ffmpeg_cmd = [
@@ -420,7 +398,6 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
                 detail=f"Failed to merge videos: {e2.stderr}. Please ensure FFmpeg is installed."
             )
     finally:
-        # Clean up concat file
         if concat_file.exists():
             concat_file.unlink()
 
@@ -428,9 +405,6 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
 async def list_jobs(
     current_user: dict = Depends(get_current_user),
 ) -> List[JobSchema]:
-    """
-    Return all jobs for the current user.
-    """
     return Jobs.fetch_records({"entered_by": current_user.get("id")})
 
 
@@ -468,17 +442,10 @@ async def list_pending_jobs(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ) -> JSONResponse:
-    """
-    Return only pending jobs (today's jobs in progress or waiting to start) with pagination.
-    Status: session_not_started or session_in_progress
-    Exclude: cancelled jobs
-    Supports infinite scrolling with pagination.
-    """
     try:
         user_entered_by = get_context('entered_by')
         today = datetime.now().date()
         
-        # Build base query
         query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -492,10 +459,8 @@ async def list_pending_jobs(
             .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
         )
         
-        # Get total count before pagination
         total = query.count()
         
-        # Apply pagination and ordering
         jobs = (
             query
             .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
@@ -504,13 +469,18 @@ async def list_pending_jobs(
             .all()
         )
         
-        # Calculate total pages
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-        
         jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+        job_nos = [job["job_no"] for job in jobs_data]
+        status_by_job = get_video_upload_status(job_nos, db)
         
+        for job_data in jobs_data:
+            job_status = status_by_job.get(job_data["job_no"], {"witness_videos_status": {}})
+            job_data["witness_videos_status"] = job_status.get("witness_videos_status", {})
+        
+
+        logger.info(f"Jobs data: {jobs_data[1]}")
         logger.info(f"Found {len(jobs_data)} pending jobs (page {page}/{total_pages}) for user {user_entered_by}")
-        
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -549,16 +519,10 @@ async def list_upcoming_jobs(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db)
 ) -> JSONResponse:
-    """
-    Return only upcoming jobs (tomorrow and beyond) with pagination.
-    Status: upcoming
-    Supports infinite scrolling with pagination.
-    """
     try:
         user_entered_by = get_context('entered_by')
         tomorrow = (datetime.now().date() + timedelta(days=1))
         logger.info(f"page_size: {page_size}")
-        # Build base query
         query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -572,10 +536,8 @@ async def list_upcoming_jobs(
             .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
         )
         
-        # Get total count before pagination
         total = query.count()
         
-        # Apply pagination and ordering
         jobs = (
             query
             .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
@@ -584,7 +546,6 @@ async def list_upcoming_jobs(
             .all()
         )
         
-        # Calculate total pages
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         
         jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]

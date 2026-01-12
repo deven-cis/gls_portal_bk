@@ -1,15 +1,11 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import update
-
-from src.auth.utils import get_current_user
-from src.core.database import get_db
 from src.core.logger import logger
 from src.job_assignment.models import JobAssignment
-from src.job_assignment.schema import JobReassignRequestSchema, JobAssignmentResponseSchema
+from src.job_assignment.schema import JobReassignRequestSchema
 from src.jobs.models import Jobs
-from src.users.models import Users
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
@@ -19,24 +15,11 @@ from src.additional_documents.models import AdditionalDocuments
 from src.core.context import get_context
 
 
-job_assignment_apis = APIRouter(prefix='/jobs', tags=['jobs'])
-
-
-@job_assignment_apis.post("/reassign", status_code=200)
-async def reassign_job(
-    payload: JobReassignRequestSchema,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-) -> JSONResponse:
-    """
-    Reassign a job to another user.
-    Updates entered_by for all related records (witnesses, videos, attorneys, etc.)
-    """
+async def reassign_job(payload: JobReassignRequestSchema, db: Session) -> JSONResponse:
     try:
         logger.info(f"Reassigning job {payload.job_id} to user {payload.assignee_user_id}, {payload}")
         current_entered_by = get_context('entered_by')
         current_user_id = get_context('user_id')
-        # Get the job
         job = db.query(Jobs).filter(
             Jobs.job_no == payload.job_id,
             Jobs.entered_by == current_entered_by,
@@ -58,7 +41,6 @@ async def reassign_job(
         job_no = payload.job_id
         assignee_entered_by = payload.assignee_entered_by
         
-        # Create JobAssignment record
         assignment = JobAssignment(
             assigner_id=current_user_id,
             assignee_id=assignee_user_id,
@@ -71,7 +53,6 @@ async def reassign_job(
         db.add(assignment)
         logger.info(f"Assignment: {assignment}")
         
-        # Update entered_by for all related tables in bulk
         tables_to_update = [
             (Jobs, Jobs.job_no),
             (Witnesses, Witnesses.job_no),

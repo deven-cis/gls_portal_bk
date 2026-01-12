@@ -1,29 +1,19 @@
 """
 Utility functions for jobs module
 """
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List, Union
 from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case, String
 
 from src.jobs.models import Jobs
 from src.witness_videos.models import WitnessVideos
 from src.jobs.schema import CalendarEventSchema
-from src.cases.models import Cases
+from src.witnesses.models import Witnesses
 
 
 def format_time_for_calendar(time_obj) -> str:
-    """
-    Format time object to "HH:MM" string format for calendar.
-    
-    Args:
-        time_obj: datetime.time or string time
-        
-    Returns:
-        str: Time in "HH:MM" format
-    """
     if isinstance(time_obj, str):
-        # If it's already a string, try to parse it
         if ':' in time_obj:
             parts = time_obj.split(':')
             return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}"
@@ -34,73 +24,69 @@ def format_time_for_calendar(time_obj) -> str:
 
 
 def get_video_upload_status(
-    job_no: int,
+    job_no: Union[int, List[int]],
     db: Session,
-    expected_count: Optional[int] = None
-) -> dict:
-    """
-    Get video upload status for a job.
+) -> Union[Dict[str, Dict[str, str]], Dict[int, Dict[str, Dict[str, str]]]]:
+    is_single = isinstance(job_no, int)
+    job_nos = [job_no] if is_single else job_no
     
-    Args:
-        job_no: Job number
-        db: Database session
-        expected_count: Expected video count (from job.expected_video_count)
-        
-    Returns:
-        dict with keys:
-            - videos_uploaded: int
-            - total_videos: int
-            - has_video: bool
-            - is_pending: bool
-    """
-    # Count uploaded videos (non-archived)
-    videos_uploaded = (
-        db.query(func.count(WitnessVideos.id))
-        .filter(
-            WitnessVideos.job_no == job_no,
-            WitnessVideos.is_archived == False,
-            WitnessVideos.file_path.isnot(None),
-            WitnessVideos.file_path != ""
+    if not job_nos:
+        return {} if not is_single else {"witness_videos_status": {}}
+    
+    query = (
+        db.query(
+            Witnesses.job_no,
+            Witnesses.witness_name,
+            func.count(WitnessVideos.id).label('total_count'),
+            func.sum(
+                case(
+                    (
+                        (WitnessVideos.file_path.isnot(None)) &
+                        (WitnessVideos.file_path != ""),
+                        1
+                    ),
+                    else_=0
+                )
+            ).label('uploaded_count')
         )
-        .scalar() or 0
+        .outerjoin(
+            WitnessVideos,
+            (WitnessVideos.wit_no == Witnesses.id) &
+            (WitnessVideos.job_no == Witnesses.job_no) &
+            (WitnessVideos.is_archived == False)
+        )
+        .filter(
+            Witnesses.job_no.in_(job_nos),
+            Witnesses.is_archived == False
+        )
+        .group_by(Witnesses.job_no, Witnesses.id, Witnesses.witness_name)
+        .all()
     )
     
-    # Use expected count if provided, otherwise count witnesses
-    if expected_count is not None and expected_count > 0:
-        total_videos = expected_count
+    if is_single:
+        witness_statuses: Dict[str, str] = {}
+        for _, witness_name, total_count, uploaded_count in query:
+            total_count = total_count or 0
+            uploaded_count = uploaded_count or 0
+            if total_count > 0 and uploaded_count < total_count:
+                witness_statuses[witness_name] = f"{uploaded_count}/{total_count}"
+        return {"witness_videos_status": witness_statuses}
     else:
-        # Fallback: count witnesses for the job
-        from src.witnesses.models import Witnesses
-        total_videos = (
-            db.query(func.count(Witnesses.id))
-            .filter(
-                Witnesses.job_no == job_no,
-                Witnesses.is_archived == False
-            )
-            .scalar() or 0
-        )
-    
-    has_video = videos_uploaded > 0
-    is_pending = total_videos > 0 and videos_uploaded < total_videos
-    
-    return {
-        "videos_uploaded": videos_uploaded,
-        "total_videos": total_videos,
-        "has_video": has_video,
-        "is_pending": is_pending
-    }
+        status_by_job: Dict[int, Dict[str, Dict[str, str]]] = {}
+        for job_no, witness_name, total_count, uploaded_count in query:
+            if job_no not in status_by_job:
+                status_by_job[job_no] = {"witness_videos_status": {}}
+            total_count = total_count or 0
+            uploaded_count = uploaded_count or 0
+            if total_count > 0 and uploaded_count < total_count:
+                status_by_job[job_no]["witness_videos_status"][witness_name] = f"{uploaded_count}/{total_count}"
+        for job_no in job_nos:
+            if job_no not in status_by_job:
+                status_by_job[job_no] = {"witness_videos_status": {}}
+        return status_by_job
 
 
 def build_calendar_event_title(job: Jobs) -> str:
-    """
-    Build calendar event title from job and case information.
-    
-    Args:
-        job: Jobs model instance
-        
-    Returns:
-        str: Formatted title like "Deposition: Johnson vs. Smith - Courtroom"
-    """
     case_name = "Unknown Case"
     location = ""
     
@@ -117,36 +103,13 @@ def build_calendar_event_title(job: Jobs) -> str:
 
 
 def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
-    """
-    Convert a Jobs model instance to CalendarEventSchema.
-    
-    Args:
-        job: Jobs model instance
-        db: Database session for querying video status
-        
-    Returns:
-        CalendarEventSchema: Calendar event data
-    """
-    # Get video upload status
-    video_status = get_video_upload_status(
-        job.job_no,
-        db,
-        expected_count=job.expected_video_count
-    )
-    
-    # Build title
+    witness_videos_status = get_video_upload_status(job.job_no, db)
     title = build_calendar_event_title(job)
-    
-    # Determine status
     status = None
-    if video_status["is_pending"]:
-        status = "pending"
     
-    # Format times
     start_time_str = format_time_for_calendar(job.start_time)
     end_time_str = format_time_for_calendar(job.end_time)
     
-    # Get deadline if exists
     deadline = job.video_upload_deadline
     
     return CalendarEventSchema(
@@ -158,20 +121,15 @@ def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
         endTime=end_time_str,
         status=status,
         computed_status=job.computed_status,
-        videosUploaded=video_status["videos_uploaded"] if video_status["total_videos"] > 0 else None,
-        totalVideos=video_status["total_videos"] if video_status["total_videos"] > 0 else None,
         deadline=deadline,
         type="deposition",
-        hasVideo=video_status["has_video"]
+        witness_videos_status=witness_videos_status.get("witness_videos_status",{})
     )
 
 
 def get_date_range_for_month(year: int, month: int) -> Tuple[date, date]:
-   
-    # First day of the month
     start_date = date(year, month, 1)
     
-    # Last day of the month
     if month == 12:
         end_date = date(year + 1, 1, 1) - timedelta(days=1)
     else:
@@ -183,11 +141,9 @@ def get_date_range_for_month(year: int, month: int) -> Tuple[date, date]:
 def get_date_range_for_week(year: int, month: int, day: int) -> Tuple[date, date]:
     target_date = date(year, month, day)
     
-    # Get Monday of the week (weekday 0 = Monday)
     days_since_monday = target_date.weekday()
     start_date = target_date - timedelta(days=days_since_monday)
     
-    # Get Sunday of the week
     end_date = start_date + timedelta(days=6)
     
     return start_date, end_date

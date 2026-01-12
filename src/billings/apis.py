@@ -1,44 +1,16 @@
 from typing import List, Optional
 from pathlib import Path
-
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    status,
-    UploadFile,
-    File,
-    Form,
-    Query,
-    Request,
-)
+from fastapi import HTTPException, status, UploadFile, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-
-from src.auth.utils import get_current_user
 from src.billings.models import Billings
-from src.billings.schema import BillingCreateSchema, BillingUpdateSchema, BillingSchema, BillingWithDocumentsSchema, AdditionalDocumentResponseSchema
-from src.jobs.models import Jobs
+from src.billings.schema import BillingSchema, BillingWithDocumentsSchema, AdditionalDocumentResponseSchema
 from src.additional_documents.models import AdditionalDocuments
 from src.core.file_utils import save_multiple_files
 from src.core.logger import logger
-from src.core.database import get_db
 
 
-billings_router = APIRouter(prefix="/billings", tags=["billings"])
-
-
-@billings_router.get("/get/{job_no}", status_code=200)
-async def get_billing_by_job(
-    job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """
-    Get billing for a specific job with all associated documents.
-    Most common use case - frontend passes job_no to get billing info.
-    Returns complete billing information including all uploaded documents.
-    """
+async def get_billing_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
         billing = db.query(Billings).filter(
             Billings.job_no == job_no,
@@ -56,19 +28,16 @@ async def get_billing_by_job(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Get all associated additional documents for this billing
         documents = db.query(AdditionalDocuments).filter(
             AdditionalDocuments.billing_id == billing.id,
             AdditionalDocuments.is_archived == False
         ).all()
         
-        # Serialize documents
         documents_data = [
             AdditionalDocumentResponseSchema.model_validate(doc).model_dump()
             for doc in documents
         ]
         
-        # Create complete billing response with documents
         billing_with_docs = BillingWithDocumentsSchema(
             id=billing.id,
             job_no=billing.job_no,
@@ -104,27 +73,19 @@ async def get_billing_by_job(
         )
 
 
-@billings_router.post("/create", status_code=201)
 async def create_billing(
-    job_no: int = Form(...),
-    cancel_en_route: bool = Form(False),
-    cancel_setup: bool = Form(False),
-    billing_notes: Optional[str] = Form(None),
-    videographer_hours_present: Optional[str] = Form(None),
-    file_hours_length: Optional[str] = Form(None),
-    files: List[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    job_no: int,
+    cancel_en_route: bool,
+    cancel_setup: bool,
+    billing_notes: Optional[str],
+    videographer_hours_present: Optional[str],
+    file_hours_length: Optional[str],
+    files: Optional[List[UploadFile]],
+    db: Session,
 ) -> JSONResponse:
-    """
-    Create billing for a job.
-
-    - Associates billing with a job via job_no
-    - Supports optional additional documents (multiple files)
-    - Returns structured JSON with status_code, message, success, result
-    """
     try:
         logger.info(f"Creating billing for files: {files}")
+        from src.jobs.models import Jobs
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
             return JSONResponse(
@@ -147,7 +108,6 @@ async def create_billing(
         )
         billing = Billings.save(billing)
 
-        # Handle multiple additional documents
         documents_created = 0
         if files:
             saved_files = await save_multiple_files(files, "billings")
@@ -191,25 +151,18 @@ async def create_billing(
         )
 
 
-@billings_router.put("/update/{billing_id}", status_code=200)
 async def update_billing(
     billing_id: int,
     request: Request,
-    job_no: Optional[int] = Form(None),
-    cancel_en_route: Optional[str] = Form(None),
-    cancel_setup: Optional[str] = Form(None),
-    billing_notes: Optional[str] = Form(None),
-    videographer_hours_present: Optional[str] = Form(None),
-    file_hours_length: Optional[str] = Form(None),
-    files: List[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """
-    Update billing. Only provided fields will be updated, others remain unchanged.
-    Frontend sends: job_no, cancel_en_route, cancel_setup, billing_notes,
-    videographer_hours_present, file_hours_length, files (new uploads), remove_documents (IDs to remove)
-    """
+    job_no: Optional[int],
+    cancel_en_route: Optional[str],
+    cancel_setup: Optional[str],
+    billing_notes: Optional[str],
+    videographer_hours_present: Optional[str],
+    file_hours_length: Optional[str],
+    files: Optional[List[UploadFile]],
+    db: Session,
+) -> JSONResponse:
     try:
         logger.info(f"Updating billing for files: {files}")
         billing = db.query(Billings).filter(
@@ -228,12 +181,10 @@ async def update_billing(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Track which fields were updated
         fields_updated = []
         
-        # Update only fields that are provided (not None)
         if job_no is not None:
-            # Verify job exists
+            from src.jobs.models import Jobs
             job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
             if not job:
                 return JSONResponse(
@@ -249,12 +200,10 @@ async def update_billing(
             fields_updated.append("job_no")
         
         if cancel_en_route is not None:
-            # Convert string to boolean
             billing.cancel_en_route = cancel_en_route.lower() in ['true', '1', 'yes']
             fields_updated.append("cancel_en_route")
         
         if cancel_setup is not None:
-            # Convert string to boolean
             billing.cancel_setup = cancel_setup.lower() in ['true', '1', 'yes']
             fields_updated.append("cancel_setup")
         
@@ -279,7 +228,6 @@ async def update_billing(
                 billing.file_hours_length = file_hours_length
             fields_updated.append("file_hours_length")
         
-        # Handle document removal - read from form data to get all values with same key
         form_data = await request.form()
         remove_documents = form_data.getlist("remove_documents") if "remove_documents" in form_data else []
         
@@ -295,7 +243,6 @@ async def update_billing(
                     ).first()
                     
                     if doc:
-                        # Delete physical file if exists
                         if doc.file_path:
                             try:
                                 file_path = Path(doc.file_path)
@@ -305,7 +252,6 @@ async def update_billing(
                             except Exception as e:
                                 logger.warning(f"Failed to delete file {doc.file_path}: {str(e)}")
                         
-                        # Archive the document
                         doc.is_archived = True
                         doc.save()
                         documents_removed += 1
@@ -316,7 +262,6 @@ async def update_billing(
         if documents_removed > 0:
             fields_updated.append(f"documents (removed {documents_removed})")
         
-        # Handle new document uploads
         documents_uploaded = 0
         if files:
             saved_files = await save_multiple_files(files, "billings")
@@ -333,13 +278,10 @@ async def update_billing(
         if documents_uploaded > 0:
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
         
-        # Save billing changes
         billing.save()
         
-        # Serialize SQLAlchemy model to Pydantic schema
         billing_data = BillingSchema.model_validate(billing)
         
-        # Prepare response message
         if fields_updated:
             message = f"Billing updated successfully. Fields updated: {', '.join(fields_updated)}"
         else:
@@ -369,13 +311,7 @@ async def update_billing(
         )
 
 
-
-@billings_router.delete("/delete/{billing_id}", status_code=200)
-async def delete_billing(
-    billing_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
+async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
     try:
         billing = db.query(Billings).filter(Billings.id == billing_id, Billings.is_archived == False).first()
         if not billing or billing.is_archived:

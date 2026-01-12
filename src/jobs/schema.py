@@ -1,5 +1,5 @@
 from datetime import datetime, time
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from pydantic import BaseModel
 from src.cases.schema import CaseSchema, CaseListSchema
@@ -29,7 +29,7 @@ class JobSchema(BaseModel):
     cancel_reason: Optional[CancelReasonEnum] = None
     cancel_details: Optional[str] = None
     case: Optional[CaseListSchema] = None
-
+    witness_videos_status: Optional[Dict[str, str]] = None
     class Config:
         from_attributes = True
 
@@ -89,6 +89,7 @@ class CalendarEventSchema(BaseModel):
     deadline: Optional[datetime] = None
     type: str = "deposition"
     hasVideo: bool = False
+    witness_videos_status: Optional[Dict[str, str]] = None  
 
     class Config:
         from_attributes = True

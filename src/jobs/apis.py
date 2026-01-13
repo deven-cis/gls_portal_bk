@@ -1,6 +1,6 @@
 from typing import List, Optional, Union
 from datetime import datetime, timedelta, date
-from fastapi import Depends, HTTPException, status, Query, Body
+from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
@@ -9,19 +9,14 @@ import tempfile
 import os
 from pathlib import Path
 
-from src.auth.utils import get_current_user
 from src.jobs.models import Jobs
 from src.core.logger import logger
 from src.cases.models import Cases
-from src.core.database import get_db
 from src.core.context import get_context
-from fastapi import APIRouter
 from src.jobs.schema import (
     JobSchema, 
     CancelJobSchema, 
     CancelledAndCompletedJobSchema, 
-    CompletedJobDetailsSchema,
-    CalendarEventSchema,
     MarkJobAsDoneSchema
 )
 from src.jobs.models import JobStatusEnum, CancelReasonEnum
@@ -36,16 +31,13 @@ from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
-jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
 
 
-@jobs_apis.get('/get/{job_no}/cancelled_details', status_code=200)
 async def get_cancelled_job_details(
     job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
-    
     try:
         user_entered_by = get_context('entered_by')
         logger.info(f"Getting cancelled job details for job_no {job_no} for user {user_entered_by}")
@@ -108,22 +100,16 @@ async def get_cancelled_job_details(
         )
 
 
-@jobs_apis.get('/get/{job_no}/completed_details', status_code=200, response_model=None)
 async def get_completed_job_details(
     job_no: int,
-    download_all: bool = Query(False, description="If true, merge and download all videos"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    download_all: bool,
+    current_user: dict,
+    db: Session
 ) -> Union[JSONResponse, FileResponse]:
-    """
-    Get completed job details including witnesses and attorneys.
-    If download_all=true, merges all videos using FFmpeg and returns as download.
-    """
     try:
         user_entered_by = get_context('entered_by')
         logger.info(f"Getting completed job details for job_no {job_no} for user {user_entered_by}")
         
-        # Get the job and verify it belongs to the user and is completed
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -149,7 +135,6 @@ async def get_completed_job_details(
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Use helper function to get witnesses with videos
         witnesses = get_witnesses_with_videos(job_no, db, witness_id=None)
         
         attorneys = (
@@ -161,9 +146,7 @@ async def get_completed_job_details(
             .all()
         )
         
-        # If download_all is requested, merge videos and return file
         if download_all:
-            # Collect all video file paths
             video_paths = []
             for witness in witnesses:
                 for video in witness.witness_vid:
@@ -181,11 +164,9 @@ async def get_completed_job_details(
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             
-            # Merge videos using helper function
             merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
             merged_filename = merged_file_path.name
             
-            # Return the merged file for download
             return FileResponse(
                 path=str(merged_file_path),
                 filename=merged_filename,
@@ -195,7 +176,6 @@ async def get_completed_job_details(
                 }
             )
         
-        # Normal response: return JSON with job details
         witnesses_data = [
             WitnessSchema.model_validate(witness).model_dump(mode='json') 
             for witness in witnesses
@@ -242,12 +222,11 @@ async def get_completed_job_details(
         )
 
 
-@jobs_apis.get("/get/{job_no}/{case_no}", status_code=200)  
 async def get_mark_as_done_status(
     job_no: int,
     case_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
     try:
         logger.info(f"Getting mark as done status for job_no {job_no} and case_no {case_no}")
@@ -291,9 +270,6 @@ async def get_mark_as_done_status(
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-
-
-
 
 
 def get_witnesses_with_videos(job_no: int, db: Session, witness_id: Optional[int] = None) -> List[Witnesses]:
@@ -401,21 +377,16 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         if concat_file.exists():
             concat_file.unlink()
 
-@jobs_apis.get('/list')
 async def list_jobs(
-    current_user: dict = Depends(get_current_user),
-) -> List[JobSchema]:
+    current_user: dict,
+) -> JSONResponse:
     return Jobs.fetch_records({"entered_by": current_user.get("id")})
 
 
-@jobs_apis.get('/list_by_case')
 async def list_jobs_by_case(
-    current_user: dict = Depends(get_current_user),
-    db=Depends(get_db),
-) -> List[JobSchema]:
-    """
-    Return jobs for a specific case that belong to the current user.
-    """
+    current_user: dict,
+    db: Session,
+) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
         logger.info(f"Fetching jobs for user {user_entered_by}")
@@ -435,12 +406,11 @@ async def list_jobs_by_case(
             detail='Unable to fetch jobs for the requested case',
         )
 
-@jobs_apis.get('/pending/')
 async def list_pending_jobs(
-    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    current_user: dict = Depends(get_current_user),
-    db=Depends(get_db)
+    page: int,
+    page_size: int,
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
@@ -512,12 +482,11 @@ async def list_pending_jobs(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@jobs_apis.get('/upcoming/')
 async def list_upcoming_jobs(
-    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    current_user: dict = Depends(get_current_user),
-    db=Depends(get_db)
+    page: int,
+    page_size: int,
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
@@ -583,15 +552,11 @@ async def list_upcoming_jobs(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@jobs_apis.get('/get/{job_no}/session_start_time/', status_code=200)
 async def get_session_start_time(
     job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
-    """
-    Get a session for a job.
-    """
     try:
         logger.info(f"Getting session start time for job_no {job_no}")
         user_entered_by = get_context('entered_by')
@@ -676,20 +641,14 @@ async def get_session_start_time(
 
 
 
-@jobs_apis.post('/{job_no}/session/start', status_code=200)
 async def start_session(
     job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
-    """
-    Start a session for a job.
-    Sets actual_session_start_time to current time and updates status to session_started.
-    """
     try:
         user_entered_by = get_context('entered_by')
         
-        # Find the job and verify it belongs to the user
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -711,7 +670,6 @@ async def start_session(
             )
     
         
-        # Start the session
         job.actual_session_start_time = datetime.now()
         job.computed_status =  JobStatusEnum.SESSION_IN_PROGRESS.value
         
@@ -750,20 +708,14 @@ async def start_session(
         )
 
 
-@jobs_apis.post('/{job_no}/session/end', status_code=200)
 async def end_session(
     job_no: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
-    """
-    End a session for a job.
-    Sets actual_session_end_time, calculates duration, and marks session as completed.
-    """
     try:
         user_entered_by = get_context('entered_by')
         
-        # Find the job and verify it belongs to the user
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -789,16 +741,13 @@ async def end_session(
             )
        
         
-        # End the session
         job.actual_session_end_time = datetime.now()
         
-        # Calculate duration
         duration = job.actual_session_end_time - job.actual_session_start_time
         total_seconds = int(duration.total_seconds())
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         seconds = total_seconds % 60
-        # Format: H:MM:SS or HH:MM:SS (hours not padded to allow for long durations)
         job.session_duration = f"{hours}:{minutes:02d}:{seconds:02d}"
         
         job.session_completed = True
@@ -838,16 +787,12 @@ async def end_session(
         )
 
 
-@jobs_apis.post('/{job_no}/cancel', status_code=200)
 async def cancel_job(
     job_no: int,
     payload: CancelJobSchema,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
-    """
-    Cancel a job.
-    """
     try:
         user_entered_by = get_context('entered_by')
         
@@ -875,10 +820,7 @@ async def cancel_job(
         
         logger.info(f"Cancelling job {job_no} with payload: {payload.cancel_reason}")
         
-        # Assign cancel_reason - SQLAlchemy PgEnum will automatically convert enum to value
         if payload.cancel_reason:
-            # Ensure we're assigning the enum member itself (not the value)
-            # SQLAlchemy's PgEnum will handle the conversion to database value
             job.cancel_reason = payload.cancel_reason
             logger.info(f"Assigned cancel_reason: {payload.cancel_reason} (type: {type(payload.cancel_reason)})")
         else:
@@ -893,7 +835,6 @@ async def cancel_job(
         db.commit()
         db.refresh(job)
         
-        # Log the saved value to verify
         logger.info(f"Saved cancel_reason to database: {job.cancel_reason}")
         return JSONResponse(
             content={
@@ -922,23 +863,16 @@ async def cancel_job(
 
 
 
-
-@jobs_apis.get('/cancelled_and_completed_jobs/{type}')
 async def cancelled_and_completed_jobs(
     type: str,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    start_date: Optional[date],
+    end_date: Optional[date],
+    page: int,
+    page_size: int,
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
-    """
-    List all cancelled or completed jobs for the current user with pagination.
-    Optionally filter by `job_date` using `start_date` and/or `end_date` (inclusive).
-    """
     try:
-        # Validate type parameter
         if type not in ['Cancelled', 'Completed']:
             return JSONResponse(
                 content={
@@ -957,7 +891,6 @@ async def cancelled_and_completed_jobs(
             f"(start_date={start_date}, end_date={end_date}, page={page}, page_size={page_size})"
         )
         
-        # Build base query
         query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -967,7 +900,6 @@ async def cancelled_and_completed_jobs(
             .filter(Jobs.entered_by == user_entered_by)
         )
 
-        # Apply optional date filters (inclusive)
         if start_date:
             query = query.filter(
                 func.date(Jobs.job_date) >= start_date
@@ -977,19 +909,16 @@ async def cancelled_and_completed_jobs(
                 func.date(Jobs.job_date) <= end_date
             )
         
-        # Apply type-specific filters
         if type == 'Cancelled':
             query = query.filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
-        else:  # Completed
+        else:
             query = query.filter(
                 Jobs.computed_status == JobStatusEnum.COMPLETED.value,
                 Jobs.session_completed == True
             )
         
-        # Get total count before pagination
         total = query.count()
         
-        # Apply pagination and ordering
         jobs = (
             query
             .order_by(Jobs.job_date.desc(), Jobs.job_no.desc())
@@ -998,7 +927,6 @@ async def cancelled_and_completed_jobs(
             .all()
         )
         
-        # Calculate total pages
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         
         if not jobs:
@@ -1052,16 +980,14 @@ async def cancelled_and_completed_jobs(
 
 
 
-@jobs_apis.patch("/{job_no}/mark_as_done/{type}", status_code=200)
 async def mark_job_as_done(
     job_no: int,
     type: str,
-    body: dict = Body(...),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    body: dict,
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
     try:
-        # Validate type parameter
         valid_types = ['case', 'witnesses', 'attorneys', 'billings', 'equipment_time']
         if type not in valid_types:
             return JSONResponse(
@@ -1074,13 +1000,11 @@ async def mark_job_as_done(
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
-        # Extract is_done from request body
         is_done = body.get("is_done", False)
         
         logger.info(f"Marking job {job_no} as done: {type} = {is_done}")
         user_entered_by = get_context('entered_by') 
         
-        # Optimized single query with all filters
         job = (
             db.query(Jobs)
             .filter(
@@ -1103,14 +1027,12 @@ async def mark_job_as_done(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        # Update mark_is_done status
         setattr(job, f"mark_is_done_{type}", is_done)
         db.commit()
         db.refresh(job)
         
         logger.info(f'Job {job_no} marked as done: {type} = {is_done}')
         
-        # Simplified response message
         message = f"Job {job_no} {type} marked as done successfully" if is_done else f"Job {job_no} {type} marked as not done successfully"
         return JSONResponse(
             content={
@@ -1144,8 +1066,6 @@ async def mark_job_as_done(
 
 
 
-
-
 def _get_calendar_events_query(
     db: Session,
     user_entered_by: int,
@@ -1169,26 +1089,21 @@ def _get_calendar_events_query(
     )
 
 
-@jobs_apis.get('/calendar/events', status_code=200)
 async def get_calendar_events(
-    # Month filter (priority 1)
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
-    day: Optional[int] = Query(None),
-    # Custom date range filter (priority 2)
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    year: Optional[int],
+    month: Optional[int],
+    day: Optional[int],
+    start_date: Optional[date],
+    end_date: Optional[date],
+    current_user: dict,
+    db: Session
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
         start_date_filter: date
         end_date_filter: date
         filter_type: str = ""
-        # Determine filter type based on provided parameters (priority order)
         if year is not None and month is not None and day is not None:
-            # Week view
             if not (1 <= month <= 12):
                 return JSONResponse(
                     content={
@@ -1231,7 +1146,6 @@ async def get_calendar_events(
             logger.info(f"Fetching calendar events for week containing {target_date} for user {user_entered_by}")
             
         elif year is not None and month is not None:
-            # Month view
             if not (1 <= month <= 12):
                 return JSONResponse(
                     content={
@@ -1248,7 +1162,6 @@ async def get_calendar_events(
             logger.info(f"Fetching calendar events for month {year}-{month:02d} for user {user_entered_by}")
             
         elif start_date is not None and end_date is not None:
-            # Custom date range
             if start_date > end_date:
                 return JSONResponse(
                     content={
@@ -1266,7 +1179,6 @@ async def get_calendar_events(
             logger.info(f"Fetching calendar events from {start_date} to {end_date} for user {user_entered_by}")
             
         else:
-            # No valid filter combination provided
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1282,10 +1194,8 @@ async def get_calendar_events(
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
-        # Use shared query function
         jobs = _get_calendar_events_query(db, user_entered_by, start_date_filter, end_date_filter)
         
-        # Convert jobs to calendar events
         events = [job_to_calendar_event(job, db).model_dump(mode='json') for job in jobs]
         logger.info(f"Events: {events}")
         logger.info(f"Found {len(events)} calendar events for {filter_type}")
@@ -1311,4 +1221,3 @@ async def get_calendar_events(
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-

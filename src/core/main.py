@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from src.auth import auth_router
 from src.core.config import config
 from src.cases import cases_router
-from src.jobs.apis import jobs_apis
+from src.jobs import jobs_apis
 from src.attorneys import attorneys_router
 from src.billings import billings_router
 from src.equipment_time import equipment_time_router

@@ -447,9 +447,7 @@ async def list_pending_jobs(
         for job_data in jobs_data:
             job_status = status_by_job.get(job_data["job_no"], {"witness_videos_status": {}})
             job_data["witness_videos_status"] = job_status.get("witness_videos_status", {})
-        
 
-        logger.info(f"Jobs data: {jobs_data[1]}")
         logger.info(f"Found {len(jobs_data)} pending jobs (page {page}/{total_pages}) for user {user_entered_by}")
         return JSONResponse(
             content={

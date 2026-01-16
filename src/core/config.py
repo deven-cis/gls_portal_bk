@@ -47,9 +47,31 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 0
     FRONTEND_URL: str = "http://localhost:3000/"
 
+    # External Database (for data sync)
+    EXTERNAL_DB_USER: str = "postgres"
+    EXTERNAL_DB_PASSWORD: str = "admin123"
+    EXTERNAL_DB_HOST: str = "localhost"
+    EXTERNAL_DB_PORT: int = 5432
+    EXTERNAL_DB_NAME: str = "rb9_db"
+    
+    # Sync Configuration
+    SYNC_DATA_DAYS: int = 1  
+    SYNC_INTERVAL_MINUTES: int = 2  
+    SYNC_DATA_SOURCE: str = "rb9_data"
+
+    # CSV File Paths (for CSV mode - only writes to local DB, not external DB)
+    SYNC_CSV_USERS: str = ""  
+    SYNC_CSV_CASES: str = ""  
+    SYNC_CSV_JOBS: str = "jobs_csv.csv"
+
     @property
     def DATABASE_URL(self) -> str:
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+
+    @property
+    def EXTERNAL_DATABASE_URL(self) -> str:
+        return f"postgresql://{self.EXTERNAL_DB_USER}:{self.EXTERNAL_DB_PASSWORD}@{self.EXTERNAL_DB_HOST}:{self.EXTERNAL_DB_PORT}/{self.EXTERNAL_DB_NAME}"
+
 
     class Config:
         env_file = "ENVs/.env.local"

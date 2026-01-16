@@ -41,9 +41,10 @@ def upgrade() -> None:
     op.create_index(op.f('ix_cases_case_no'), 'cases', ['case_no'], unique=True)
     op.create_index(op.f('ix_cases_id'), 'cases', ['id'], unique=False)
     op.create_table('users',
+    sa.Column('user_no', sa.Integer(), nullable=False, unique=True),
     sa.Column('full_name', sa.String(), nullable=False),
     sa.Column('email', sa.String(), nullable=False),
-    sa.Column('login_name', sa.String(), nullable=False),
+    sa.Column('login_name', sa.String(), nullable=True),
     sa.Column('login_password', sa.LargeBinary(), nullable=True),
     sa.Column('require_password_change', sa.Boolean(), nullable=True),
     sa.Column('profile_image_url', sa.String(), nullable=True),
@@ -56,6 +57,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+    op.create_index(op.f('ix_users_user_no'), 'users', ['user_no'], unique=True)
     op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
     op.create_index(op.f('ix_users_login_name'), 'users', ['login_name'], unique=True)
     op.create_table('jobs',

@@ -1,12 +1,13 @@
-from sqlalchemy import Column, String, LargeBinary, Boolean
+from sqlalchemy import Column, String, LargeBinary, Boolean, Integer
 from sqlalchemy.orm import relationship
 from src.core.models import Base
 from src.job_assignment.models import JobAssignment
 
 class Users(Base):
+    user_no = Column(Integer, unique=True, nullable=False, index=True)
     full_name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
-    login_name = Column(String, unique=True, index=True, nullable=False)
+    login_name = Column(String, unique=True, index=True, nullable=True)
     login_password = Column(LargeBinary)
     require_password_change = Column(Boolean, default=False)
     profile_image_url = Column(String, nullable=True)

@@ -1,4 +1,4 @@
-# from src.core.sync.csv_sync import sync_all_from_csv, sync_users_from_csv, sync_cases_from_csv, sync_jobs_from_csv
+# from src.core.sync.csv_import_service import sync_all_from_csv, sync_users_from_csv, sync_cases_from_csv, sync_jobs_from_csv
 
 # # Sync all tables
 # results = sync_all_from_csv()

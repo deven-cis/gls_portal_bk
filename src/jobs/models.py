@@ -26,7 +26,7 @@ class Jobs(Base):
     job_date = Column(DateTime, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
-    timezone_no = Column(Integer, nullable=True)
+    timezone_name = Column(String(255), nullable=True)
     status = Column(String(255), nullable=False)
     case_no = Column(Integer, ForeignKey('cases.case_no'), nullable=False, index=True)
     job_type = Column(String(255), nullable=True)

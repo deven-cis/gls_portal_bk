@@ -21,7 +21,7 @@ from src.core.config import config
 from src.core.logger import logger
 
 
-class ExternalDatabase:
+class ExternalDatabaseConnection:
    
     
     def __init__(self):

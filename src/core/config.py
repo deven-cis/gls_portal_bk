@@ -52,7 +52,15 @@ class Settings(BaseSettings):
     EXTERNAL_DB_PASSWORD: str = "admin123"
     EXTERNAL_DB_HOST: str = "localhost"
     EXTERNAL_DB_PORT: int = 5432
-    EXTERNAL_DB_NAME: str = "rb9_db"
+    EXTERNAL_DB_NAME: str = "external_db"
+    
+
+    # RB9 Database (for data sync)
+    RB9_DB_USER: str = "postgres"
+    RB9_DB_PASSWORD: str = "admin123"
+    RB9_DB_HOST: str = "localhost"
+    RB9_DB_PORT: int = 5432
+    RB9_DB_NAME: str = "rb9_db"
     
     # Sync Configuration
     SYNC_DATA_DAYS: int = 1  
@@ -71,6 +79,10 @@ class Settings(BaseSettings):
     @property
     def EXTERNAL_DATABASE_URL(self) -> str:
         return f"postgresql://{self.EXTERNAL_DB_USER}:{self.EXTERNAL_DB_PASSWORD}@{self.EXTERNAL_DB_HOST}:{self.EXTERNAL_DB_PORT}/{self.EXTERNAL_DB_NAME}"
+    
+    @property
+    def RB9_DATABASE_URL(self) -> str:
+        return f"postgresql://{self.RB9_DB_USER}:{self.RB9_DB_PASSWORD}@{self.RB9_DB_HOST}:{self.RB9_DB_PORT}/{self.RB9_DB_NAME}"
 
 
     class Config:

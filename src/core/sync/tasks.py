@@ -8,8 +8,9 @@ from datetime import datetime
 from src.core.celery_config import celery_app
 from src.core.config import config
 from src.core.logger import logger
-from src.core.sync.sync_handlers import sync_cases, sync_jobs, sync_users
 from src.core.sync.config import get_sync_date_range
+from src.core.sync.external_to_rb9_synchronization_service import ExternalToRb9SynchronizationService
+from src.core.sync.rb9_to_newgls_synchronization_service import Rb9ToNewGlsSynchronizationService
 
 
 @celery_app.task(name='src.core.sync.tasks.sync_external_data')
@@ -21,7 +22,7 @@ def sync_external_data():
     
     # Only handle database sync via Celery - CSV sync is manual only
     if data_source != 'rb9_data':
-        logger.warning(f"CSV sync mode ({data_source}) - CSV sync should be run manually from csv_sync.py")
+        # logger.warning(f"CSV sync mode ({data_source}) - CSV sync should be run manually from csv_import_service.py")
         return {
             'start_time': str(start_time),
             'end_time': str(datetime.utcnow()),
@@ -33,7 +34,7 @@ def sync_external_data():
             'errors': ['CSV sync must be run manually']
         }
     
-    start_date, end_date = get_sync_date_range()
+    # start_date, end_date = get_sync_date_range()
     
     results = {
         'start_time': str(start_time),
@@ -47,41 +48,45 @@ def sync_external_data():
     }
     
     try:
-        logger.info("Starting database sync (external database mode)...")
-        logger.info(f"Sync date range: {start_date} to {end_date}")
+        logger.info("Starting two-stage database sync...")
         
-        # Sync Cases
-        logger.info("Starting Cases sync...")
-        try:
-            results['cases'] = sync_cases(start_date=start_date, end_date=end_date)
-            logger.info(f"Cases sync completed: {results['cases']}")
-        except Exception as e:
-            logger.error(f"Cases sync failed: {str(e)}", exc_info=True)
-            results['cases'] = {'error': str(e)}
-            results['errors'].append(f"Cases: {str(e)}")
-            results['success'] = False
+        # Stage 1: External DB → rb9_db
+        logger.info("=" * 60)
+        logger.info("STAGE 1: Syncing External DB → rb9_db")
+        logger.info("=" * 60)
         
-        # Sync Jobs
-        logger.info("Starting Jobs sync...")
-        try:
-            results['jobs'] = sync_jobs(start_date=start_date, end_date=end_date)
-            logger.info(f"Jobs sync completed: {results['jobs']}")
-        except Exception as e:
-            logger.error(f"Jobs sync failed: {str(e)}", exc_info=True)
-            results['jobs'] = {'error': str(e)}
-            results['errors'].append(f"Jobs: {str(e)}")
-            results['success'] = False
+        # For testing: use static date and limit to 2 records
+        test_start_date = datetime(2006, 4, 11, 0, 0, 0)
+        test_end_date = datetime(2006, 4, 11, 23, 59, 59, 999999)
+        test_limit = 1  # Limit to 2 records for testing
         
-        # Sync Users
-        logger.info("Starting Users sync...")
-        try:
-            results['users'] = sync_users(start_date=start_date, end_date=end_date)
-            logger.info(f"Users sync completed: {results['users']}")
-        except Exception as e:
-            logger.error(f"Users sync failed: {str(e)}", exc_info=True)
-            results['users'] = {'error': str(e)}
-            results['errors'].append(f"Users: {str(e)}")
-            results['success'] = False
+        # stage1_service = ExternalToRb9SynchronizationService()
+        # stage1_results = stage1_service.sync_all(
+        #     start_date=test_start_date,
+        #     end_date=test_end_date,
+        #     limit=test_limit
+        # )
+        
+        # results['stage1'] = stage1_results
+        # logger.info(f"Stage 1 completed: {stage1_results}")
+        
+        # Stage 2: rb9_db → new_gls_db
+        logger.info("=" * 60)
+        logger.info("STAGE 2: Syncing rb9_db → new_gls_db")
+        logger.info("=" * 60)
+        
+        # For testing: use same date range and limit as Stage 1
+        stage2_service = Rb9ToNewGlsSynchronizationService()
+        stage2_results = stage2_service.synchronize_all_tables(
+            start_date=test_start_date,
+            end_date=test_end_date,
+            limit=test_limit
+        )
+        
+        results['stage2'] = stage2_results
+        logger.info(f"Stage 2 completed: {stage2_results}")
+        
+        
         
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
@@ -89,26 +94,25 @@ def sync_external_data():
         results['end_time'] = str(end_time)
         results['duration_seconds'] = duration
         
-        # Log summary
-        total_inserted = (
-            results['cases'].get('inserted', 0) +
-            results['jobs'].get('inserted', 0) +
-            results['users'].get('inserted', 0)
-        )
-        total_updated = (
-            results['cases'].get('updated', 0) +
-            results['jobs'].get('updated', 0) +
-            results['users'].get('updated', 0)
-        )
-        total_errors = (
-            results['cases'].get('errors', 0) +
-            results['jobs'].get('errors', 0) +
-            results['users'].get('errors', 0)
-        )
+        # Log summary (include Stage 1 and Stage 2)
+        # stage1_inserted = stage1_results.get('total_inserted', 0)
+        # stage1_updated = stage1_results.get('total_updated', 0)
+        # stage1_errors = stage1_results.get('total_errors', 0)
+        
+        stage2_inserted = stage2_results.get('total_inserted', 0)
+        stage2_updated = stage2_results.get('total_updated', 0)
+        stage2_errors = stage2_results.get('total_errors', 0)
+        stage2_emails = stage2_results.get('total_emails_sent', 0)
+        
+        # total_inserted = stage1_inserted + stage2_inserted
+        # total_updated = stage1_updated + stage2_updated
+        # total_errors = stage1_errors + stage2_errors
         
         logger.info(
             f"[Celery Task] Data sync completed in {duration:.2f}s. "
-            f"Total: Inserted={total_inserted}, Updated={total_updated}, Errors={total_errors}"
+            # f"Stage 1: Inserted={stage1_inserted}, Updated={stage1_updated}, Errors={stage1_errors}. "
+            f"Stage 2: Inserted={stage2_inserted}, Updated={stage2_updated}, Errors={stage2_errors}, EmailsSent={stage2_emails}. "
+            # f"Total: Inserted={total_inserted}, Updated={total_updated}, Errors={total_errors}"
         )
         
         return results

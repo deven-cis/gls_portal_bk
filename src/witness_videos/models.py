@@ -2,8 +2,6 @@ from sqlalchemy import Column, ForeignKey, Text, Time, Integer, String
 from sqlalchemy.orm import relationship
 
 from src.core.models import Base
-from src.witnesses.models import Witnesses
-
 
 class WitnessVideos(Base):
     __tablename__ = "witness_videos"

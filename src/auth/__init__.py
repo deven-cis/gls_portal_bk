@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 from src.auth.schema import TokenResponseSchema
 from src.core.utils import get_response_schema
-from src.auth import apis
+from src.auth.apis import login_user, refresh_token, forget_password, reset_password
 
 auth_router = APIRouter(tags=["authentication"])
 
 auth_router.add_api_route(
     '/login',
-    apis.login_user,
+    login_user,
     methods=['POST'],
     response_model=TokenResponseSchema,
     responses={
@@ -21,7 +21,7 @@ auth_router.add_api_route(
 
 auth_router.add_api_route(
     '/refresh-token',
-    apis.refresh_token,
+    refresh_token,
     methods=['POST'],
     responses=get_response_schema(
         TokenResponseSchema,
@@ -31,13 +31,13 @@ auth_router.add_api_route(
 
 auth_router.add_api_route(
     '/forget-password',
-    apis.forget_password,
+    forget_password,
     methods=['POST'],
 )
 
 auth_router.add_api_route(
     '/reset-password',
-    apis.reset_password,
+    reset_password,
     methods=["POST"]
 )
 

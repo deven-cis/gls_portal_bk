@@ -45,16 +45,18 @@ async def get_cancelled_job_details(
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.entered_by == user_entered_by)
-            .filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.job_no == job_no,
+                Jobs.entered_by == user_entered_by,
+                Jobs.computed_status == JobStatusEnum.CANCELLED.value
+            )
             .first()
         )
 
         if not job:
+            logger.error(f"Job with job_no {job_no} not found, not cancelled, or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -65,17 +67,15 @@ async def get_cancelled_job_details(
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        if isinstance(job.cancel_reason, CancelReasonEnum):
-            cancel_reason_value = job.cancel_reason.value
-        else:
-            cancel_reason_value = job.cancel_reason
+        cancel_reason_value = job.cancel_reason.value if isinstance(job.cancel_reason, CancelReasonEnum) else job.cancel_reason
 
         job_details = {
             "job_no": job.job_no,
             "cancel_reason": cancel_reason_value,
             "cancel_details": job.cancel_details,
         }
-        logger.info(f"Job details: {job_details}")
+        
+        logger.info(f"Successfully got cancelled job details for job_no {job_no}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -113,18 +113,18 @@ async def get_completed_job_details(
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.entered_by == user_entered_by)
             .filter(
-                (Jobs.computed_status == JobStatusEnum.COMPLETED.value)
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.job_no == job_no,
+                Jobs.entered_by == user_entered_by,
+                Jobs.computed_status == JobStatusEnum.COMPLETED.value
             )
             .first()
         )
-        logger.info(f"Job=--------------------------: {user_entered_by}")
+        
         if not job:
+            logger.error(f"Job with job_no {job_no} not found, not completed, or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -136,7 +136,6 @@ async def get_completed_job_details(
             )
 
         witnesses = get_witnesses_with_videos(job_no, db, witness_id=None)
-        
         attorneys = (
             db.query(Attorneys)
             .filter(
@@ -165,14 +164,13 @@ async def get_completed_job_details(
                 )
             
             merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
-            merged_filename = merged_file_path.name
             
             return FileResponse(
                 path=str(merged_file_path),
-                filename=merged_filename,
+                filename=merged_file_path.name,
                 media_type='video/mp4',
                 headers={
-                    "Content-Disposition": f"attachment; filename={merged_filename}"
+                    "Content-Disposition": f"attachment; filename={merged_file_path.name}"
                 }
             )
         
@@ -180,7 +178,6 @@ async def get_completed_job_details(
             WitnessSchema.model_validate(witness).model_dump(mode='json') 
             for witness in witnesses
         ]
-        
         attorneys_data = [
             AttorneySchema.model_validate(attorney).model_dump(mode='json')
             for attorney in attorneys
@@ -230,6 +227,7 @@ async def get_mark_as_done_status(
 ) -> JSONResponse:
     try:
         logger.info(f"Getting mark as done status for job_no {job_no} and case_no {case_no}")
+        
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -237,6 +235,7 @@ async def get_mark_as_done_status(
             .options(joinedload(Jobs.case))
             .first()
         )
+        
         if not job:
             return JSONResponse(
                 content={
@@ -247,9 +246,10 @@ async def get_mark_as_done_status(
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        logger.info(f"Job: {job}")
+        
         mark_as_done_status = MarkJobAsDoneSchema.model_validate(job).model_dump()
         logger.info(f"Mark as done status: {mark_as_done_status}")
+        
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -300,26 +300,22 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         raise ValueError("No video paths provided")
     
     temp_dir = Path(tempfile.gettempdir())
-    merged_filename = f"job_{job_no}_all_videos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    merged_filename = f"job_{job_no}_all_videos_{timestamp}.mp4"
     merged_file_path = temp_dir / merged_filename
-    
-    concat_file = temp_dir / f"concat_list_{job_no}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    concat_file = temp_dir / f"concat_list_{job_no}_{timestamp}.txt"
     
     try:
         project_root = Path(__file__).resolve().parent.parent.parent
-        
         valid_video_count = 0
+        
         with open(concat_file, 'w') as f:
             for video_path in video_paths:
-                if not os.path.isabs(video_path):
-                    abs_video_path = (project_root / video_path).resolve()
-                else:
-                    abs_video_path = Path(video_path).resolve()
+                abs_video_path = (project_root / video_path).resolve() if not os.path.isabs(video_path) else Path(video_path).resolve()
                 
                 if not abs_video_path.exists():
                     logger.warning(f"Video file not found: {abs_video_path} (original: {video_path})")
                     continue
-                
                 
                 escaped_path = str(abs_video_path).replace("'", "'\\''")
                 f.write(f"file '{escaped_path}'\n")
@@ -332,22 +328,12 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
             )
         
         ffmpeg_cmd = [
-            'ffmpeg',
-            '-f', 'concat',
-            '-safe', '0',
-            '-i', str(concat_file),
-            '-c', 'copy',
-            '-y',
+            'ffmpeg', '-f', 'concat', '-safe', '0',
+            '-i', str(concat_file), '-c', 'copy', '-y',
             str(merged_file_path)
         ]
         
-        subprocess.run(
-            ffmpeg_cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        
+        subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=True)
         logger.info(f"Successfully merged {valid_video_count} videos for job_no {job_no}")
         return merged_file_path
         
@@ -356,14 +342,9 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         try:
             logger.info("Retrying with re-encoding...")
             ffmpeg_cmd = [
-                'ffmpeg',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', str(concat_file),
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-y',
-                str(merged_file_path)
+                'ffmpeg', '-f', 'concat', '-safe', '0',
+                '-i', str(concat_file), '-c:v', 'libx264',
+                '-c:a', 'aac', '-y', str(merged_file_path)
             ]
             subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=True)
             logger.info(f"Successfully merged videos with re-encoding for job_no {job_no}")
@@ -420,17 +401,17 @@ async def list_pending_jobs(
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
             .options(joinedload(Jobs.case))
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.entered_by == user_entered_by)
-            .filter(Jobs.job_date <= datetime.combine(today, datetime.min.time()))
-            .filter(Jobs.session_completed == False)
-            .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.entered_by == user_entered_by,
+                Jobs.job_date <= datetime.combine(today, datetime.min.time()),
+                Jobs.session_completed == False,
+                Jobs.computed_status != JobStatusEnum.CANCELLED.value
+            )
         )
         
         total = query.count()
-        
         jobs = (
             query
             .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
@@ -449,6 +430,7 @@ async def list_pending_jobs(
             job_data["witness_videos_status"] = job_status.get("witness_videos_status", {})
 
         logger.info(f"Found {len(jobs_data)} pending jobs (page {page}/{total_pages}) for user {user_entered_by}")
+        
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -488,23 +470,23 @@ async def list_upcoming_jobs(
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
-        tomorrow = (datetime.now().date() + timedelta(days=1))
-        logger.info(f"page_size: {page_size}")
+        tomorrow = datetime.now().date() + timedelta(days=1)
+        
         query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
             .options(joinedload(Jobs.case))
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.session_completed == False)
-            .filter(Jobs.job_date >= datetime.combine(tomorrow, datetime.min.time()))
-            .filter(Jobs.entered_by == user_entered_by)
-            .filter(Jobs.computed_status != JobStatusEnum.CANCELLED.value)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.session_completed == False,
+                Jobs.job_date >= datetime.combine(tomorrow, datetime.min.time()),
+                Jobs.entered_by == user_entered_by,
+                Jobs.computed_status != JobStatusEnum.CANCELLED.value
+            )
         )
         
         total = query.count()
-        
         jobs = (
             query
             .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
@@ -514,7 +496,6 @@ async def list_upcoming_jobs(
         )
         
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-        
         jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
         
         logger.info(f"Found {len(jobs_data)} upcoming jobs (page {page}/{total_pages}) for user {user_entered_by}")
@@ -556,17 +537,21 @@ async def get_session_start_time(
     db: Session
 ) -> JSONResponse:
     try:
-        logger.info(f"Getting session start time for job_no {job_no}")
         user_entered_by = get_context('entered_by')
+        logger.info(f"Getting session start time for job_no {job_no}")
+        
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Jobs.is_archived == False)
-            .filter(Cases.entered_by == user_entered_by)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.job_no == job_no,
+                Jobs.entered_by == user_entered_by
+            )
             .first()
         )
+        
         if not job:
             return JSONResponse(
                 content={
@@ -638,7 +623,6 @@ async def get_session_start_time(
 
 
 
-
 async def start_session(
     job_no: int,
     current_user: dict,
@@ -650,13 +634,17 @@ async def start_session(
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Jobs.job_no == job_no)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.session_completed == False)
+            .filter(
+                Jobs.job_no == job_no,
+                Jobs.entered_by == user_entered_by,
+                Jobs.is_archived == False,
+                Jobs.session_completed == False
+            )
             .first()
         )
         
         if not job:
+            logger.error(f"Job with job_no {job_no} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -666,10 +654,9 @@ async def start_session(
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-    
         
         job.actual_session_start_time = datetime.now()
-        job.computed_status =  JobStatusEnum.SESSION_IN_PROGRESS.value
+        job.computed_status = JobStatusEnum.SESSION_IN_PROGRESS.value
         
         db.commit()
         db.refresh(job)
@@ -717,13 +704,15 @@ async def end_session(
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Jobs.computed_status == JobStatusEnum.SESSION_IN_PROGRESS.value)
-            .filter(Jobs.actual_session_start_time is not None)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.session_completed == False)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.job_no == job_no,
+                Jobs.entered_by == user_entered_by,
+                Jobs.computed_status == JobStatusEnum.SESSION_IN_PROGRESS.value,
+                Jobs.actual_session_start_time.isnot(None),
+                Jobs.session_completed == False
+            )
             .first()
         )
         
@@ -737,27 +726,21 @@ async def end_session(
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-       
         
         job.actual_session_end_time = datetime.now()
-        
         duration = job.actual_session_end_time - job.actual_session_start_time
         total_seconds = int(duration.total_seconds())
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         seconds = total_seconds % 60
         job.session_duration = f"{hours}:{minutes:02d}:{seconds:02d}"
-        
         job.session_completed = True
         job.computed_status = JobStatusEnum.COMPLETED.value
         
         db.commit()
         db.refresh(job)
         
-        logger.info(
-            f"Session ended for job_no {job_no}. "
-            f"Duration: {job.session_duration}"
-        )
+        logger.info(f"Session ended for job_no {job_no}. Duration: {job.session_duration}")
         
         return JSONResponse(
             content={
@@ -797,14 +780,17 @@ async def cancel_job(
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Jobs.job_no == job_no)
-            .filter(Cases.entered_by == user_entered_by)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.job_no == job_no,
+                Jobs.entered_by == user_entered_by
+            )
             .first()
         )
 
         if not job:
+            logger.error(f"Job with job_no {job_no} not found or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -815,16 +801,9 @@ async def cancel_job(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
+        logger.info(f"Cancelling job {job_no} with reason: {payload.cancel_reason}")
         
-        logger.info(f"Cancelling job {job_no} with payload: {payload.cancel_reason}")
-        
-        if payload.cancel_reason:
-            job.cancel_reason = payload.cancel_reason
-            logger.info(f"Assigned cancel_reason: {payload.cancel_reason} (type: {type(payload.cancel_reason)})")
-        else:
-            job.cancel_reason = None
-            logger.info("Cancel reason set to None")
-        
+        job.cancel_reason = payload.cancel_reason if payload.cancel_reason else None
         job.cancel_details = payload.cancel_details
         job.cancel_by = user_entered_by
         job.cancel_date = datetime.now()
@@ -833,7 +812,8 @@ async def cancel_job(
         db.commit()
         db.refresh(job)
         
-        logger.info(f"Saved cancel_reason to database: {job.cancel_reason}")
+        logger.info(f"Job {job_no} cancelled successfully with reason: {job.cancel_reason}")
+        
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -859,8 +839,6 @@ async def cancel_job(
         )
 
 
-
-
 async def cancelled_and_completed_jobs(
     type: str,
     start_date: Optional[date],
@@ -872,6 +850,7 @@ async def cancelled_and_completed_jobs(
 ) -> JSONResponse:
     try:
         if type not in ['Cancelled', 'Completed']:
+            logger.error(f"Invalid type: {type}")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -892,20 +871,17 @@ async def cancelled_and_completed_jobs(
         query = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Cases.is_archived == False)
-            .filter(Jobs.is_archived == False)
-            .filter(Cases.entered_by == user_entered_by)
-            .filter(Jobs.entered_by == user_entered_by)
+            .filter(
+                Cases.is_archived == False,
+                Jobs.is_archived == False,
+                Jobs.entered_by == user_entered_by
+            )
         )
 
         if start_date:
-            query = query.filter(
-                func.date(Jobs.job_date) >= start_date
-            )
+            query = query.filter(func.date(Jobs.job_date) >= start_date)
         if end_date:
-            query = query.filter(
-                func.date(Jobs.job_date) <= end_date
-            )
+            query = query.filter(func.date(Jobs.job_date) <= end_date)
         
         if type == 'Cancelled':
             query = query.filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
@@ -916,7 +892,6 @@ async def cancelled_and_completed_jobs(
             )
         
         total = query.count()
-        
         jobs = (
             query
             .order_by(Jobs.job_date.desc(), Jobs.job_no.desc())
@@ -926,31 +901,13 @@ async def cancelled_and_completed_jobs(
         )
         
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-        
-        if not jobs:
-            return JSONResponse(
-                content={
-                    "status_code": status.HTTP_200_OK,
-                    "message": f"No {type} jobs found",
-                    "success": True,
-                    "result": [],
-                    "pagination": {
-                        "page": page,
-                        "page_size": page_size,
-                        "total": total,
-                        "total_pages": total_pages,
-                        "has_next": False,
-                        "has_previous": False
-                    }
-                },
-                status_code=status.HTTP_200_OK
-            )
-        
         jobs_data = [CancelledAndCompletedJobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+        
+        logger.info(f"{type} jobs listed successfully")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
-                "message": f"{type} jobs listed successfully",
+                "message": f"{type} jobs listed successfully" if jobs else f"No {type} jobs found",
                 "success": True,
                 "result": jobs_data,
                 "pagination": {
@@ -988,6 +945,7 @@ async def mark_job_as_done(
     try:
         valid_types = ['case', 'witnesses', 'attorneys', 'billings', 'equipment_time']
         if type not in valid_types:
+            logger.error(f"Invalid type: {type}")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -999,9 +957,9 @@ async def mark_job_as_done(
             )
         
         is_done = body.get("is_done", False)
+        user_entered_by = get_context('entered_by')
         
         logger.info(f"Marking job {job_no} as done: {type} = {is_done}")
-        user_entered_by = get_context('entered_by') 
         
         job = (
             db.query(Jobs)
@@ -1031,7 +989,8 @@ async def mark_job_as_done(
         
         logger.info(f'Job {job_no} marked as done: {type} = {is_done}')
         
-        message = f"Job {job_no} {type} marked as done successfully" if is_done else f"Job {job_no} {type} marked as not done successfully"
+        message = f"Job {job_no} {type} marked as {'done' if is_done else 'not done'} successfully"
+        
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -1074,10 +1033,9 @@ def _get_calendar_events_query(
         db.query(Jobs)
         .join(Cases, Jobs.case_no == Cases.case_no)
         .options(joinedload(Jobs.case))
-        .filter(Cases.is_archived == False)
         .filter(Jobs.is_archived == False)
         .filter(Jobs.entered_by == user_entered_by)
-        .filter(Cases.entered_by == user_entered_by)
+        .filter(Cases.is_archived == False)
         .filter(
             func.date(Jobs.job_date) >= start_date,
             func.date(Jobs.job_date) <= end_date
@@ -1101,8 +1059,10 @@ async def get_calendar_events(
         start_date_filter: date
         end_date_filter: date
         filter_type: str = ""
+        
         if year is not None and month is not None and day is not None:
             if not (1 <= month <= 12):
+                logger.error(f"Invalid month: {month}")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1114,6 +1074,7 @@ async def get_calendar_events(
                 )
             
             if not (1 <= day <= 31):
+                logger.error(f"Invalid day: {day}")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1127,6 +1088,7 @@ async def get_calendar_events(
             try:
                 target_date = date(year, month, day)
             except ValueError as e:
+                logger.error(f"Invalid date: {str(e)}")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1137,14 +1099,13 @@ async def get_calendar_events(
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            logger.info(f"Week view: Year: {year}, Month: {month}, Day: {day}, Start date: {start_date}, End date: {end_date}")
             start_date_filter, end_date_filter = get_date_range_for_week(year, month, day)
-            logger.info(f"Start date: {start_date_filter}, End date: {end_date_filter}")
             filter_type = f"week containing {target_date}"
-            logger.info(f"Fetching calendar events for week containing {target_date} for user {user_entered_by}")
+            logger.info(f"Fetching calendar events for {filter_type} for user {user_entered_by}")
             
         elif year is not None and month is not None:
             if not (1 <= month <= 12):
+                logger.error(f"Invalid month: {month}")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1157,10 +1118,11 @@ async def get_calendar_events(
             
             start_date_filter, end_date_filter = get_date_range_for_month(year, month)
             filter_type = f"month {year}-{month:02d}"
-            logger.info(f"Fetching calendar events for month {year}-{month:02d} for user {user_entered_by}")
+            logger.info(f"Fetching calendar events for {filter_type} for user {user_entered_by}")
             
         elif start_date is not None and end_date is not None:
             if start_date > end_date:
+                logger.error(f"start_date must be before or equal to end_date")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1174,9 +1136,10 @@ async def get_calendar_events(
             start_date_filter = start_date
             end_date_filter = end_date
             filter_type = f"custom range {start_date} to {end_date}"
-            logger.info(f"Fetching calendar events from {start_date} to {end_date} for user {user_entered_by}")
+            logger.info(f"Fetching calendar events for {filter_type} for user {user_entered_by}")
             
         else:
+            logger.error(f"Invalid parameters")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -1193,9 +1156,7 @@ async def get_calendar_events(
             )
         
         jobs = _get_calendar_events_query(db, user_entered_by, start_date_filter, end_date_filter)
-        
         events = [job_to_calendar_event(job, db).model_dump(mode='json') for job in jobs]
-        logger.info(f"Events: {events}")
         logger.info(f"Found {len(events)} calendar events for {filter_type}")
         
         return JSONResponse(

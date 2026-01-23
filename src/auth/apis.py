@@ -22,13 +22,11 @@ from fastapi.responses import JSONResponse
 
 async def login_user(data: LoginCredentialSchema):
     try:
-        # Avoid logging login_name (PII)
-        logger.info("Login attempt")
+        logger.info(f"Login attempt for user: {data.login_name}")
         
-        # Find user by login name
         users = Users.fetch_records({"login_name": data.login_name})
         if not users:
-            # NOTE: return HTTP 200 to avoid frontend refresh-token flow on login failures.
+            logger.warning(f"Login failed - user not found: {data.login_name}")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_401_UNAUTHORIZED,
@@ -40,8 +38,8 @@ async def login_user(data: LoginCredentialSchema):
             
         user_obj = users[0]
         
-        # Verify password
         if not verify_password(data.login_password, user_obj.login_password):
+            logger.warning(f"Login failed - invalid password for user: {data.login_name}")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_401_UNAUTHORIZED,
@@ -51,14 +49,12 @@ async def login_user(data: LoginCredentialSchema):
                 status_code=status.HTTP_200_OK,
             )
         
-        # Create tokens
         token_data = create_access_token({
             'login_name': user_obj.login_name,
             'id': user_obj.id,
             'entered_by': getattr(user_obj, 'entered_by', None)
         })
         
-        # Prepare user response
         user_response = {   
             'id': user_obj.id,
             'full_name': user_obj.full_name or '',
@@ -69,7 +65,6 @@ async def login_user(data: LoginCredentialSchema):
             'last_modified_by': getattr(user_obj, 'last_modified_by', None)
         }
         
-        # Add user object to the response
         response = {
             'access_token': token_data['access_token'],
             'refresh_token': token_data['refresh_token'],
@@ -78,7 +73,7 @@ async def login_user(data: LoginCredentialSchema):
             'user': user_response
         }
         
-        logger.info("Login success")
+        logger.info(f"Login successful for user: {data.login_name} (ID: {user_obj.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -91,7 +86,7 @@ async def login_user(data: LoginCredentialSchema):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error('Login error: %s', str(e), exc_info=True)
+        logger.error(f'Login error for user {data.login_name}: {str(e)}', exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -102,15 +97,12 @@ async def login_user(data: LoginCredentialSchema):
         )
 
 async def refresh_token(data: RefreshTokenSchema):
-    """
-    Refresh access token using a valid refresh token
-    """
     try:
-        # Decode the refresh token
+        logger.info("Token refresh attempt")
         payload = decode_token(data.refresh_token)
         
-        # Check if the token is a refresh token
         if payload.get('type') != 'refresh':
+            logger.warning("Token refresh failed - invalid token type")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_401_UNAUTHORIZED,
@@ -120,9 +112,9 @@ async def refresh_token(data: RefreshTokenSchema):
                 status_code=status.HTTP_401_UNAUTHORIZED
             )
             
-        # Check if user still exists
         user = Users.get(payload.get('id'))
         if not user:
+            logger.warning(f"Token refresh failed - user not found (ID: {payload.get('id')})")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_401_UNAUTHORIZED,
@@ -132,7 +124,6 @@ async def refresh_token(data: RefreshTokenSchema):
                 status_code=status.HTTP_401_UNAUTHORIZED
             )
             
-        # Create new tokens
         token_data = {
             'login_name': user.login_name,
             'id': user.id,
@@ -141,7 +132,6 @@ async def refresh_token(data: RefreshTokenSchema):
         
         new_tokens = create_access_token(token_data)
         
-        # Prepare user response
         user_response = {   
             'id': user.id,
             'full_name': user.full_name or '',
@@ -152,7 +142,6 @@ async def refresh_token(data: RefreshTokenSchema):
             'last_modified_by': getattr(user, 'last_modified_by', None)
         }
         
-        # Return response in same format as login
         response = {
             'access_token': new_tokens['access_token'],
             'refresh_token': new_tokens['refresh_token'],
@@ -161,7 +150,7 @@ async def refresh_token(data: RefreshTokenSchema):
             'user': user_response
         }
         
-        logger.info(f"Token refreshed successfully for user: {user.login_name}")
+        logger.info(f"Token refreshed successfully for user: {user.login_name} (ID: {user.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -172,7 +161,7 @@ async def refresh_token(data: RefreshTokenSchema):
         )
         
     except HTTPException as e:
-        # Re-raise HTTP exceptions (from decode_token)
+        logger.error(f"HTTPException during token refresh: {e.detail}")
         return JSONResponse(
             content={
                 "status_code": e.status_code,
@@ -204,48 +193,62 @@ async def refresh_token(data: RefreshTokenSchema):
 
 
 async def forget_password(email: EmailStr):
-    """
-    Forget Password API
-    """
     try:
+        logger.info(f"Password reset request for email: {email}")
         users = Users.fetch_records({"email": email})
  
         if users:
             user = users[0]
+            logger.info(f"Password reset link generation for user: {user.login_name} (ID: {user.id})")
             token = create_forget_password_token(
                 {"email": user.email, "id": user.id}
             )
+            if not token:
+                logger.error(f"Error creating forget password token for user: {user.login_name} (ID: {user.id})")
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        "success": False,
+                        "result": {"message": "Error creating forget password token"}
+                    },
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             password_reset_link = f"{config.FRONTEND_URL}reset-password?token={token}"
+            logger.info(f"Password reset link generated for user: {user.login_name} (ID: {user.id})")
             send_email(
                 receiver_email=user.email,
                 subject="Password Reset Request",
                 template_name="forget_password.html",
                 context={"full_name": user.full_name, "reset_link": password_reset_link}
             )
+            logger.info(f"Password reset email sent successfully to: {email}")
  
             return {"message": "Password reset link has been sent to your email", "success": True}
+        else:
+            logger.warning(f"Password reset requested for non-existent email: {email}")
+            return {"message": "Password reset link has been sent to your email", "success": True}
     except Exception as e:
-        logger.error(f"Error in forget password process: {str(e)}")
+        logger.error(f"Error in forget password process for {email}: {str(e)}")
         raise HTTPException(detail="Error processing forget password request", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
  
  
 async def reset_password(
     schema: PasswordResetSchema
 ):
-    """
-    Reset Password API
-    """
     try:
+        logger.info("Password reset attempt")
         decoded_data = verify_token(schema.token)
         user = Users.get(decoded_data.get('id'))
         
+        logger.info(f"Resetting password for user: {user.login_name} (ID: {user.id})")
         user.login_password = hash_password(schema.new_password)
         user.require_password_change = False
         user.save()
+        
+        logger.info(f"Password reset successfully for user: {user.login_name} (ID: {user.id})")
  
         return {"message": "Password reset successfully", "success": True}
     except Exception as e:
         logger.error(f"Error resetting password: {str(e)}")
         raise HTTPException(detail="Invalid or expired token", status_code=status.HTTP_403_FORBIDDEN)
     
- 

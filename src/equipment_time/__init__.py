@@ -4,22 +4,23 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from src.auth.utils import get_current_user
 from src.core.database import get_db
-from src.equipment_time import apis
+from src.equipment_time.apis import get_equipment_time_by_job, create_equipment_time, update_equipment_time, delete_equipment_time
 
 equipment_time_router = APIRouter(prefix="/equipment-time", tags=["equipment-time"])
 
 
 @equipment_time_router.get("/get/{job_no}", status_code=200)
-async def get_equipment_time_by_job(
+async def get_equipment_time_by_job_endpoint(
     job_no: int,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    return await apis.get_equipment_time_by_job(job_no, db)
+
+    return await get_equipment_time_by_job(job_no, db)
 
 
 @equipment_time_router.post("/create", status_code=201)
-async def create_equipment_time(
+async def create_equipment_time_endpoint(
     job_no: int = Form(...),
     laptop_used: bool = Form(False),
     pip_used: bool = Form(False),
@@ -30,7 +31,8 @@ async def create_equipment_time(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    return await apis.create_equipment_time(
+
+    return await create_equipment_time(
         job_no=job_no,
         laptop_used=laptop_used,
         pip_used=pip_used,
@@ -43,7 +45,7 @@ async def create_equipment_time(
 
 
 @equipment_time_router.put("/update/{equipment_time_id}", status_code=200)
-async def update_equipment_time(
+async def update_equipment_time_endpoint(
     equipment_time_id: int,
     request: Request,
     laptop_used: Optional[str] = Form(None),
@@ -55,7 +57,8 @@ async def update_equipment_time(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    return await apis.update_equipment_time(
+
+    return await update_equipment_time(
         equipment_time_id=equipment_time_id,
         request=request,
         laptop_used=laptop_used,
@@ -69,10 +72,11 @@ async def update_equipment_time(
 
 
 @equipment_time_router.delete("/delete/{equipment_time_id}", status_code=200)
-async def delete_equipment_time(
+async def delete_equipment_time_endpoint(
     equipment_time_id: int,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    return await apis.delete_equipment_time(equipment_time_id, db)
+
+    return await delete_equipment_time(equipment_time_id, db)
 

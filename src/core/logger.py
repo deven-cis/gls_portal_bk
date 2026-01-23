@@ -15,7 +15,6 @@ LOG_DIR = 'log_files'
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Log format with code tracking
 LOG_FORMAT = "%(asctime)s - %(filename)s:%(lineno)d - %(funcName)s() - %(levelname)s - %(message)s"
 
 
@@ -91,7 +90,6 @@ if not logger.handlers:
     ))
     logger.addHandler(console_handler)
     
-    # File handler (date-wise rotation, 10MB limit)
     try:
         file_handler = DateRotatingHandler()
         file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))

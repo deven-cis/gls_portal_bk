@@ -120,7 +120,8 @@ def upgrade() -> None:
         sa.Column('StartTime', sa.Time(), nullable=True),
         sa.Column('EndTime', sa.Time(), nullable=True),
         sa.Column('TimezoneNo', sa.Integer(), nullable=True),
-        sa.Column('CaseNo', sa.Integer(), nullable=True),  # Foreign key to Cases.CaseNo
+        sa.Column('CaseNo', sa.Integer(), nullable=True),  
+        sa.Column('Status', sa.Integer(), nullable=True),  # Foreign key to Lists.ListNo
         sa.Column('JobType', sa.Integer(), nullable=True),
         sa.Column('ScheduledByEmail', sa.String(80), nullable=True),
         sa.Column('JobLocName', sa.String(80), nullable=True),

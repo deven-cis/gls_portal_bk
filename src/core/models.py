@@ -3,10 +3,9 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, DateTime,Boolean
 from sqlalchemy.ext.declarative import as_declarative
 from sqlalchemy.orm import declared_attr
-
 from src.core.database import get_db
 from src.core.context import get_context, get_context_db
-
+from src.core.logger import logger
 
 @as_declarative()
 class Base:
@@ -24,43 +23,48 @@ class Base:
 
     @classmethod
     def get_queryset(cls):
-        """
-        Returns the Queryset Object of class
-        """
-        db = cls.get_session()
-        return db.query(cls)
+        try:
+            logger.info(f"Getting queryset for get_queryset")
+            db = cls.get_session()
+            return db.query(cls)
+        except Exception as e:
+            logger.error(f"Error getting queryset: {str(e)}")
+            return None
 
     @classmethod
     def get_session(cls):
-        """
-        Return Current Database session
-        """
-        return get_context_db() or next(get_db())
+        try:
+            logger.info(f"Getting session for get_session")
+            return get_context_db() or next(get_db())
+        except Exception as e:
+            logger.error(f"Error getting session: {str(e)}")
+            return None
 
     def save(self):  
-        db = self.get_session()
-        self.last_modified_at = datetime.now()
-        
-        entered_by = get_context('entered_by')
-        if entered_by is None:
-            entered_by = 0
-        
-        self.last_modified_by = entered_by
-        
-        if not self.id:
-            self.entered_at = datetime.now()
-            self.entered_by = entered_by
-            db.add(self)
-        
-        db.commit()
-        db.refresh(self)
-        return self
+        try:
+            db = self.get_session()
+            self.last_modified_at = datetime.now()
+            
+            entered_by = get_context('entered_by')
+            if entered_by is None:
+                entered_by = 0
+
+            self.last_modified_by = entered_by
+            logger.info(f"Last modified by for save success")
+            if not self.id:
+                self.entered_at = datetime.now()
+                self.entered_by = entered_by
+                db.add(self)
+            logger.info(f"Saving record for save success")
+            db.commit()
+            db.refresh(self)
+            return self
+        except Exception as e:
+            logger.error(f"Error saving: {str(e)}")
+            return None
 
     @classmethod
     def get(cls, id: int):
-        """
-        Fetch the record by id
-        """
         query = cls.get_queryset()
         return query.filter(cls.id == id).first()
 
@@ -69,9 +73,6 @@ class Base:
         cls,
         filters: dict = {},
     ):
-        """
-        Fetch the records by appling respective filters
-        """
         query = cls.get_queryset()
         if filters:
             for key, value in filters.items():
@@ -88,12 +89,18 @@ class Base:
 
     @classmethod
     def check_exist(cls, filters: dict = {}):
-        """
-        Check for specific records exists or not
-        """
-        if filters:
-            records = cls.fetch_records(filters)
-            if records:
-                return True
+        try:
+            logger.info(f"Checking exist for filters")
+            if filters:
+                records = cls.fetch_records(filters)
+                if records:
+                    logger.info(f"Record exists for filters")
+                    return True
+                else:
+                    logger.info(f"Record does not exist for filters")
+                    return False    
+            else:
+                return False
+        except Exception as e:
+            logger.error(f"Error checking exist: {str(e)}")
             return False
-        return None

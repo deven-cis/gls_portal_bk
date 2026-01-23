@@ -20,6 +20,7 @@ async def list_cases(db: Session) -> JSONResponse:
 
 
 async def get_case(case_id: int, db: Session) -> JSONResponse:
+
     try:
         logger.info(f"Retrieving case {case_id}")
         case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
@@ -58,6 +59,7 @@ async def get_case(case_id: int, db: Session) -> JSONResponse:
 
 
 async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSONResponse:
+    
     try:
         case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
         if not case:
@@ -75,6 +77,7 @@ async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSO
         update_data = case_data.model_dump(exclude_unset=True, exclude_none=True)
         
         if not update_data:
+            logger.warning(f'No changes provided for case {case_id}')
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_200_OK,

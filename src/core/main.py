@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# from src.users.routes import user_router
 from src.auth import auth_router
 from src.core.config import config
 from src.cases import cases_router
@@ -22,28 +21,22 @@ app = FastAPI(
     version=config.APPLICATION_VERSION
 )
 
-# Serve uploaded files (profile pictures, witness videos, docs, etc.)
-# This enables URLs like: http://127.0.0.1:8000/uploads/...
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Default Next.js dev server
-        "http://127.0.0.1:3000",  # Alternative Next.js dev server
-        "http://192.168.2.53:3000"  # Your network URL
+        "http://localhost:3000",  
+        "http://127.0.0.1:3000", 
+        "http://192.168.2.53:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    # expose_headers=["Content-Disposition"]
 )
 
-# Include auth router with /api prefix
 app.include_router(
     auth_router,
-    prefix="/api",
     tags=["authentication"]
 )
 
@@ -86,8 +79,3 @@ app.include_router(
     job_assignment_apis,
     tags=['job-assignment']
 )
-
-# app.include_router(
-#     user_router,
-#     tags=['user management']
-# )

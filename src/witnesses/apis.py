@@ -51,16 +51,8 @@ async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
         )
 
         data = [WitnessSchema.model_validate(w).model_dump(mode="json") for w in witnesses]
-        logger.info(f"Witnesses data witnesse: {data}")
-        return JSONResponse(
-            content={
-                "status_code": status.HTTP_200_OK,
-                "message": f"Found {len(data)} witness(es)",
-                "success": True,
-                "result": data,
-            },
-            status_code=status.HTTP_200_OK,
-        )
+        logger.info(f"Witnesses data witnesses list for job_no {job_no}: {len(data)}")
+        return data
     except Exception as e:
         logger.error(
             f"Error getting witnesses list for job_no {job_no}: {str(e)}", exc_info=True
@@ -88,6 +80,7 @@ async def download_witnesses_complete_video(
         
         witnesses = get_witnesses_with_videos(job_no, db, witness_id=witness_id)
         if download_all:
+            logger.info(f"Downloading witnesses complete video for job_no {job_no}")
             video_paths = []
             for witness in witnesses:
                 for video in witness.witness_vid:
@@ -116,6 +109,7 @@ async def download_witnesses_complete_video(
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
     except Exception as e:
+        logger.error(f"Error downloading witnesses complete video: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -137,15 +131,16 @@ async def create_witness_name(data: CreateWitnessFrontSchema, db: Session) -> JS
         
         job = db.query(Jobs).filter(Jobs.job_no == data.job_no).first()
         if not job:
+            logger.error(f"Job with job_no {data.job_no} not found")
             return JSONResponse(
                 content={
-                    "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Job with job_no {data.job_no} not found",
-                    "success": False,
-                    "result": {},
-                },
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+                "status_code": status.HTTP_404_NOT_FOUND,
+                "message": f"Failed to create witness: {str(e)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
         case_info = db.query(Cases).filter(Cases.case_no == job.case_no).first()
 
@@ -201,15 +196,16 @@ async def update_witness_name(
     try:
         name = (payload.witness_name or "").strip()
         if not name:
+            logger.error(f"Witness name cannot be empty")
             return JSONResponse(
                 content={
-                    "status_code": status.HTTP_400_BAD_REQUEST,
-                    "message": "witness_name cannot be empty",
-                    "success": False,
-                    "result": {},
-                },
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
+                "status_code": status.HTTP_400_BAD_REQUEST,
+                "message": "Failed to update witness name: {str(e)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
         witness = db.query(Witnesses).filter(
             Witnesses.id == witness_id,
@@ -233,6 +229,7 @@ async def update_witness_name(
         db.refresh(witness)
 
         witness_data = WitnessSchema.model_validate(witness).model_dump(mode="json")
+        logger.info(f"Witness name updated successfully for witness_id {witness_id}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -268,6 +265,7 @@ async def save_witness_and_videos(
         raw = json.loads(payload)
         data = WitnessSaveAllPayloadSchema.model_validate(raw)
     except Exception as e:
+        logger.error(f"Invalid payload JSON: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_400_BAD_REQUEST,
@@ -280,6 +278,7 @@ async def save_witness_and_videos(
 
     try:
         if not data.witness_id:
+            logger.error(f"Witness ID is required for save/update")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -295,10 +294,11 @@ async def save_witness_and_videos(
             ~Witnesses.is_archived,
         ).first()
         if not witness:
+            logger.error(f"Witness with id {data.witness_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Witness with id {data.witness_id} not found",
+                    "message": f"Failed to save witness/videos: {str(e)}",
                     "success": False,
                     "result": {},
                 },
@@ -306,6 +306,7 @@ async def save_witness_and_videos(
             )
 
         if witness.job_no != data.job_no:
+            logger.error(f"job_no mismatch for witness {witness.id} (expected {witness.job_no}, got {data.job_no})")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -315,6 +316,7 @@ async def save_witness_and_videos(
                 },
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+        logger.info(f"Witness updated successfully for witness_id {data.witness_id}")
 
         witness.last_modified_at = now
         witness.last_modified_by = entered_by
@@ -322,6 +324,7 @@ async def save_witness_and_videos(
         if data.witness_name is not None:
             new_name = str(data.witness_name).strip()
             if not new_name:
+                logger.error(f"Witness name cannot be empty")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_400_BAD_REQUEST,
@@ -331,6 +334,7 @@ async def save_witness_and_videos(
                     },
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
+            logger.info(f"Witness name updated successfully for witness_id {data.witness_id}")
             witness.witness_name = new_name
 
         if data.witness_email is not None:
@@ -440,6 +444,7 @@ async def save_witness_and_videos(
         )
         witness_out_data = WitnessSchema.model_validate(witness_out).model_dump(mode="json")
 
+        logger.info(f"Witness + videos saved successfully for witness_id {data.witness_id}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -473,6 +478,7 @@ async def delete_witness_by_id(witness_id: int, db: Session) -> JSONResponse:
             ~Witnesses.is_archived,
         ).first()
         if not witness:
+            logger.error(f"Witness with id {witness_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,

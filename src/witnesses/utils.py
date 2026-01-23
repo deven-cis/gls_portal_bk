@@ -4,13 +4,9 @@ from src.witnesses.schema import WitnessUpdateSchema
 
 
 async def get_witness_update_data_from_request(request: Request) -> WitnessUpdateSchema:
-    """
-    Read Form data from request and convert to WitnessUpdateSchema.
-    Types are defined only in WitnessUpdateSchema to avoid repetition.
-    """
+  
     form_data = await request.form()
     
-    # Helper to safely get and convert values
     def get_value(key: str, default=None):
         value = form_data.get(key, default)
         if value is None or value == "":

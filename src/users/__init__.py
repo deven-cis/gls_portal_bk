@@ -4,14 +4,14 @@ from sqlalchemy.orm import Session
 from src.auth.utils import get_current_user
 from src.core.database import get_db
 from src.core.context import get_context
-from src.users import apis
+from src.users.apis import get_current_user_profile, upload_profile_picture, remove_profile_picture, change_password, assignee_users_list
 from src.auth.schema import PasswordChangeSchema
 
 users_router = APIRouter(prefix="/users", tags=["users"])
 
 
 @users_router.get("/current_user", status_code=200)
-async def get_current_user_profile(
+async def get_current_user_profile_endpoint(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -25,11 +25,11 @@ async def get_current_user_profile(
             },
             status_code=401,
         )
-    return await apis.get_current_user_profile(int(user_id), db)
+    return await get_current_user_profile(int(user_id), db)
 
 
 @users_router.post("/profile-picture", status_code=200)
-async def upload_profile_picture(
+async def upload_profile_picture_endpoint(
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -44,11 +44,11 @@ async def upload_profile_picture(
             },
             status_code=401,
         )
-    return await apis.upload_profile_picture(int(user_id), file, db)
+    return await upload_profile_picture(int(user_id), file, db)
 
 
 @users_router.delete("/profile-picture", status_code=200)
-async def remove_profile_picture(
+async def remove_profile_picture_endpoint(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -62,11 +62,11 @@ async def remove_profile_picture(
             },
             status_code=401,
         )
-    return await apis.remove_profile_picture(int(user_id), db)
+    return await remove_profile_picture(int(user_id), db)
 
 
 @users_router.post("/change-password", status_code=200)
-async def change_password(
+async def change_password_endpoint(
     schema: PasswordChangeSchema,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -81,13 +81,13 @@ async def change_password(
             },
             status_code=200,
         )
-    return await apis.change_password(schema, int(user_id), db)
+    return await change_password(schema, int(user_id), db)
 
 
 @users_router.get("/assignee-users-list", status_code=200)
-async def assignee_users_list(
+async def assignee_users_list_endpoint(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    return await apis.assignee_users_list(db)
+    return await assignee_users_list(db)
 

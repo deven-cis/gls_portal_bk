@@ -25,6 +25,7 @@ async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
         ).first()
         
         if not equipment_time:
+            logger.error(f"Equipment time for job_no {job_no} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -106,10 +107,11 @@ async def create_equipment_time(
     db: Session,
 ) -> JSONResponse:
     try:
-        logger.info(f"Creating equipment_time for files: {files}")
+        logger.info(f"Creating equipment_time for job {job_no}")
         from src.jobs.models import Jobs
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
+            logger.error(f"Job with job_no {job_no} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -245,6 +247,7 @@ async def update_equipment_time(
         ).first()
         
         if not equipment_time:
+            logger.error(f"Equipment time with ID {equipment_time_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,

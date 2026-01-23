@@ -1,11 +1,13 @@
 from sqlalchemy import Column, String, LargeBinary, Boolean, Integer
 from sqlalchemy.orm import relationship
 from src.core.models import Base
-from src.job_assignment.models import JobAssignment
 
 class Users(Base):
     user_no = Column(Integer, unique=True, nullable=False, index=True)
     full_name = Column(String, nullable=False)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    middle_name = Column(String, nullable=True)
     email = Column(String, unique=True, index=True, nullable=False)
     login_name = Column(String, unique=True, index=True, nullable=True)
     login_password = Column(LargeBinary)
@@ -14,14 +16,14 @@ class Users(Base):
 
     # Jobs assigned TO this user (as assignee)
     assigned_jobs = relationship(
-        JobAssignment,
+        "JobAssignment",
         foreign_keys="[JobAssignment.assignee_id]",
         back_populates="assignee"
     )
     
     # Jobs assigned BY this user (as assigner)
     jobs_assigned_by_me = relationship(
-        JobAssignment,
+        "JobAssignment",
         foreign_keys="[JobAssignment.assigner_id]",
         back_populates="assigner"
     )

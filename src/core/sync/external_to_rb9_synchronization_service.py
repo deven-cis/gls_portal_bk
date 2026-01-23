@@ -14,11 +14,7 @@ from src.core.sync.synchronization_configuration import get_sync_order, get_tabl
 
 
 class ExternalToRb9SynchronizationService:
-    """
-    Service for synchronizing data from External DB to rb9_db.
-    Uses raw SQL queries and tracks CreateAtRb/UpdateAtRb timestamps.
-    """
-    
+
     def __init__(self, external_db: Optional[ExternalDatabaseConnection] = None, rb9_db: Optional[Rb9DatabaseConnection] = None):
         self.external_db = external_db or ExternalDatabaseConnection()
         self.rb9_db = rb9_db or Rb9DatabaseConnection()
@@ -29,28 +25,16 @@ class ExternalToRb9SynchronizationService:
             'skipped': 0
         }
     
-    def sync_table(
+    def synchronize_table(
         self,
         table_name: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         limit: Optional[int] = None
     ) -> Dict[str, int]:
-        """
-        Sync a single table from External DB to rb9_db.
         
-        Args:
-            table_name: Table name (must be in SYNC_ORDER)
-            start_date: Start date for LastModified filter (for testing, use static date)
-            end_date: End date for LastModified filter
-            limit: Limit number of records (for testing: 2)
-        
-        Returns:
-            Dictionary with sync statistics
-        """
         self.stats = {'inserted': 0, 'updated': 0, 'errors': 0, 'skipped': 0}
         
-        # Get table configuration
         config = get_table_config_stage1(table_name)
         if not config:
             logger.error(f"No configuration found for table: {table_name}")
@@ -65,41 +49,42 @@ class ExternalToRb9SynchronizationService:
         try:
             logger.info(f"Starting Stage 1 sync for {table_name}")
             
-            # Build query with date filter
             params = {}
             where_clauses = []
             
-            if start_date:
-                where_clauses.append(f'"{date_field}" >= :start_date')
-                params['start_date'] = start_date
-            
-            if end_date:
-                where_clauses.append(f'"{date_field}" <= :end_date')
-                params['end_date'] = end_date
-            
-            if where_clauses:
-                where_clause = " AND ".join(where_clauses)
-                if 'WHERE' in query.upper():
-                    query += f" AND {where_clause}"
-                else:
-                    query += f" WHERE {where_clause}"
-            
-            # Add LIMIT for testing
-            if limit:
-                query += f" LIMIT {limit}"
-            
-            logger.info(f"Fetching records from External DB for {table_name}...")
-            logger.info(f"Query: {query[:200]}...")  # Log first 200 chars
-            
-            # Fetch records from External DB
-            external_records = self.external_db.execute_query(query, params)
-            logger.info(f"Fetched {len(external_records)} records from External DB")
+            try:
+                if start_date:
+                    where_clauses.append(f'"{date_field}" >= :start_date')
+                    params['start_date'] = start_date
+                
+                if end_date:
+                    where_clauses.append(f'"{date_field}" <= :end_date')
+                    params['end_date'] = end_date
+                
+                if where_clauses:
+                    where_clause = " AND ".join(where_clauses)
+                    if 'WHERE' in query.upper():
+                        query += f" AND {where_clause}"
+                    else:
+                        query += f" WHERE {where_clause}"
+                
+                if limit:
+                    query += f" LIMIT {limit}"
+                
+                logger.info(f"Fetching records from External DB for {table_name}...")
+                logger.debug(f"Query: {query[:200]}...")
+                
+                external_records = self.external_db.execute_query(query, params)
+                logger.info(f"Fetched {len(external_records)} records from External DB")
+            except Exception as e:
+                logger.error(f"Failed to fetch {table_name} records from External DB: {str(e)}", exc_info=True)
+                self.stats['errors'] += 1
+                return self.stats
             
             if not external_records:
                 logger.info(f"No records to sync for {table_name}")
                 return self.stats
             
-            # Process each record
             for record in external_records:
                 try:
                     unique_value = record.get(unique_field)
@@ -108,10 +93,8 @@ class ExternalToRb9SynchronizationService:
                         self.stats['skipped'] += 1
                         continue
                     
-                    # Check if record exists BEFORE upsert
                     existed_before = self.rb9_db.check_record_exists(config['table_name'], unique_field, unique_value)
                     
-                    # Upsert record with tracking
                     result = self.rb9_db.execute_upsert(
                         table_name=config['table_name'],
                         record=record,
@@ -120,7 +103,6 @@ class ExternalToRb9SynchronizationService:
                     )
                     
                     if result:
-                        # Track insert or update based on whether it existed before
                         if existed_before:
                             self.stats['updated'] += 1
                         else:
@@ -128,12 +110,15 @@ class ExternalToRb9SynchronizationService:
                     else:
                         self.stats['skipped'] += 1
                     
-                    # Commit in batches
                     if (self.stats['inserted'] + self.stats['updated']) % 10 == 0:
                         logger.debug(f"Processed {self.stats['inserted'] + self.stats['updated']} records for {table_name}")
                 
                 except Exception as e:
-                    logger.error(f"Error processing record in {table_name}: {str(e)}", exc_info=True)
+                    unique_value_str = str(record.get(unique_field, 'unknown'))
+                    logger.error(
+                        f"Error processing {table_name} record with {unique_field}={unique_value_str}: {str(e)}",
+                        exc_info=True
+                    )
                     self.stats['errors'] += 1
                     continue
             
@@ -151,23 +136,13 @@ class ExternalToRb9SynchronizationService:
         
         return self.stats
     
-    def sync_all(
+    def synchronize_all_tables(
         self,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         limit: Optional[int] = None
     ) -> Dict[str, Any]:
-        """
-        Sync all tables in dependency order.
         
-        Args:
-            start_date: Start date for LastModified filter
-            end_date: End date for LastModified filter
-            limit: Limit records per table (for testing: 2)
-        
-        Returns:
-            Dictionary with results for each table
-        """
         sync_order = get_sync_order()
         results = {}
         
@@ -183,7 +158,7 @@ class ExternalToRb9SynchronizationService:
             logger.info(f"Waiting for {table_name} to complete before moving to next table...")
             
             try:
-                table_stats = self.sync_table(
+                table_stats = self.synchronize_table(
                     table_name=table_name,
                     start_date=start_date,
                     end_date=end_date,
@@ -191,16 +166,15 @@ class ExternalToRb9SynchronizationService:
                 )
                 results[table_name] = table_stats
                 
-                logger.info(f"✓ {table_name} sync completed: Inserted={table_stats.get('inserted', 0)}, "
+                logger.info(f"{table_name} sync completed: Inserted={table_stats.get('inserted', 0)}, "
                           f"Updated={table_stats.get('updated', 0)}, Errors={table_stats.get('errors', 0)}")
                 
             except Exception as e:
-                logger.error(f"✗ Failed to sync {table_name}: {str(e)}", exc_info=True)
+                logger.error(f"Failed to sync {table_name}: {str(e)}", exc_info=True)
                 results[table_name] = {'error': str(e)}
             
             logger.info(f"Moving to next table in dependency order...")
         
-        # Calculate totals
         total_inserted = sum(r.get('inserted', 0) for r in results.values())
         total_updated = sum(r.get('updated', 0) for r in results.values())
         total_errors = sum(r.get('errors', 0) for r in results.values())

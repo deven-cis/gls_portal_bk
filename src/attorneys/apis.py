@@ -19,6 +19,7 @@ async def list_attorneys_by_job(job_no: int, db: Session) -> JSONResponse:
         
         attorneys_data = [AttorneySchema.model_validate(attorney).model_dump(mode='json') for attorney in attorneys]
         
+        logger.info(f"Successfully got {len(attorneys_data)} attorneys for job {job_no}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -79,7 +80,7 @@ async def create_attorney(
         saved_attorney = Attorneys.save(attorney)
         
         attorney_data = AttorneySchema.model_validate(saved_attorney)
-        
+        logger.info(f"Successfully created attorney {attorney_name} for job {job_no}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_201_CREATED,
@@ -90,6 +91,7 @@ async def create_attorney(
             status_code=status.HTTP_201_CREATED
         )
     except Exception as e:
+        logger.error(f"Error creating attorney {attorney_name} for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -117,6 +119,7 @@ async def update_attorney(
         ).first()
         
         if not attorney:
+            logger.error(f"Attorney with ID {attorney_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -197,7 +200,7 @@ async def update_attorney(
             message = f"Attorney updated successfully. Fields updated: {', '.join(fields_updated)}"
         else:
             message = "No changes provided. Attorney data remains unchanged."
-        
+        logger.info(f"Successfully updated attorney {attorney_id}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -208,6 +211,7 @@ async def update_attorney(
             status_code=status.HTTP_200_OK
         )
     except Exception as e:
+        logger.error(f"Error updating attorney {attorney_id}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -223,6 +227,7 @@ async def delete_attorney(attorney_id: int) -> JSONResponse:
     try:
         attorney = Attorneys.get_queryset().filter(Attorneys.id == attorney_id, Attorneys.is_archived == False).first()
         if not attorney:
+            logger.error(f"Attorney with ID {attorney_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,

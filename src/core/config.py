@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """
 
     # JWT
-    ACCESS_TOKEN_EXPIRATION_TIME: int = 10800  # 3 hours for testing (change back to 6600 for production)
+    ACCESS_TOKEN_EXPIRATION_TIME: int = 10800 
     REFRESH_TOKEN_EXPIRATION_TIME: int = 604800
     SECRET_KEY: str = "sfiw0ef2_kansls23ml-2jwdnslknddsf"
     ALGORITHM: str = "HS256"
@@ -67,11 +67,7 @@ class Settings(BaseSettings):
     SYNC_INTERVAL_MINUTES: int = 2  
     SYNC_DATA_SOURCE: str = "rb9_data"
 
-    # CSV File Paths (for CSV mode - only writes to local DB, not external DB)
-    SYNC_CSV_USERS: str = ""  
-    SYNC_CSV_CASES: str = ""  
-    SYNC_CSV_JOBS: str = "jobs_csv.csv"
-
+    
     @property
     def DATABASE_URL(self) -> str:
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
@@ -89,7 +85,7 @@ class Settings(BaseSettings):
         env_file = "ENVs/.env.local"
         env_file_encoding = "utf-8"
         case_sensitive = False
-        extra = "ignore"  # Ignore extra fields like DATABASE_URL from .env.local
+        extra = "ignore" 
 
 
 @lru_cache

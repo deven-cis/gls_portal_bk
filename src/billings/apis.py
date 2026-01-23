@@ -18,6 +18,7 @@ async def get_billing_by_job(job_no: int, db: Session) -> JSONResponse:
         ).first()
         
         if not billing:
+            logger.error(f"Billing for job_no {job_no} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -60,6 +61,7 @@ async def get_billing_by_job(job_no: int, db: Session) -> JSONResponse:
             },
             status_code=status.HTTP_200_OK
         )
+
     except Exception as e:
         logger.error(f"Error getting billing for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
@@ -88,6 +90,7 @@ async def create_billing(
         from src.jobs.models import Jobs
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
+            logger.error(f"Job with job_no {job_no} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -107,7 +110,7 @@ async def create_billing(
             file_hours_length=file_hours_length,
         )
         billing = Billings.save(billing)
-
+        logger.info(f"Successfully created billing for job {job_no}")
         documents_created = 0
         if files:
             saved_files = await save_multiple_files(files, "billings")
@@ -127,6 +130,8 @@ async def create_billing(
         if documents_created:
             message += f" with {documents_created} document(s)"
 
+        
+        logger.info(f"Billing created successfully for job {job_no} with {documents_created} document(s)")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_201_CREATED,
@@ -136,8 +141,7 @@ async def create_billing(
             },
             status_code=status.HTTP_201_CREATED,
         )
-    except HTTPException:
-        raise
+
     except Exception as e:
         logger.error(f"Error creating billing for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
@@ -163,14 +167,16 @@ async def update_billing(
     files: Optional[List[UploadFile]],
     db: Session,
 ) -> JSONResponse:
+
     try:
-        logger.info(f"Updating billing for files: {files}")
+        logger.info(f"Updating billing for billing {billing_id}")
         billing = db.query(Billings).filter(
             Billings.id == billing_id,
             Billings.is_archived == False
         ).first()
         
         if not billing:
+            logger.error(f"Billing with ID {billing_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -187,6 +193,7 @@ async def update_billing(
             from src.jobs.models import Jobs
             job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
             if not job:
+                logger.error(f"Job with job_no {job_no} not found")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_404_NOT_FOUND,
@@ -279,14 +286,16 @@ async def update_billing(
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
         
         billing.save()
-        
+        logger.info(f"Successfully updated billing {billing_id}")
         billing_data = BillingSchema.model_validate(billing)
         
         if fields_updated:
             message = f"Billing updated successfully. Fields updated: {', '.join(fields_updated)}"
         else:
             message = "No changes provided. Billing data remains unchanged."
-        
+
+        logger.info(f"Billing updated successfully for billing {billing_id}")
+
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -296,8 +305,7 @@ async def update_billing(
             },
             status_code=status.HTTP_200_OK
         )
-    except HTTPException:
-        raise
+
     except Exception as e:
         logger.error(f"Error updating billing {billing_id}: {str(e)}", exc_info=True)
         return JSONResponse(
@@ -312,9 +320,12 @@ async def update_billing(
 
 
 async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
+
     try:
+        logger.info(f"Deleting billing for billing {billing_id}")
         billing = db.query(Billings).filter(Billings.id == billing_id, Billings.is_archived == False).first()
         if not billing or billing.is_archived:
+            logger.error(f"Billing with ID {billing_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -327,6 +338,8 @@ async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
         
         billing.is_archived = True
         billing.save()
+        logger.info(f"Billing deleted successfully for billing {billing_id}")
+
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -336,8 +349,7 @@ async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
             },
             status_code=status.HTTP_200_OK
         )
-    except HTTPException:
-        raise
+        
     except Exception as e:
         logger.error(f"Error deleting billing {billing_id}: {str(e)}", exc_info=True)
         return JSONResponse(

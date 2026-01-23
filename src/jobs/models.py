@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger, ForeignKey, Boolean
+from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger, ForeignKey, Boolean, Date
 from sqlalchemy.types import Text
 from sqlalchemy.orm import relationship
 from src.core.models import Base
@@ -23,7 +23,7 @@ class JobStatusEnum(enum.Enum):
 class Jobs(Base):
     __tablename__ = "jobs"
 
-    job_date = Column(DateTime, nullable=False)
+    job_date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
     timezone_name = Column(String(255), nullable=True)
@@ -50,9 +50,8 @@ class Jobs(Base):
     computed_status = Column(String(50), nullable=True, default="upcoming")
     actual_session_start_time = Column(DateTime, nullable=True)  
     actual_session_end_time = Column(DateTime, nullable=True)    
-    session_duration = Column(String(255), nullable=True)  # HHH:MM:SS format (supports durations up to 9999:59:59)
+    session_duration = Column(String(255), nullable=True)
     session_completed = Column(Boolean, default=False)
-    # mark_is_done = Column(Boolean, default=False)
     video_upload_deadline = Column(DateTime, nullable=True)
     expected_video_count = Column(Integer, nullable=True)
     mark_is_done_case = Column(Boolean, default=False, server_default='false')
@@ -61,7 +60,6 @@ class Jobs(Base):
     mark_is_done_billings = Column(Boolean, default=False, server_default='false')
     mark_is_done_equipment_time = Column(Boolean, default=False, server_default='false')
     
-    # Assignment history - tracks all assignments/reassignments for this job
     assignment_history = relationship(
         "JobAssignment",
         back_populates="job",
@@ -70,8 +68,6 @@ class Jobs(Base):
         order_by="JobAssignment.entered_at.desc()"
     )
 
-    # Many-to-one: each job belongs to a single case
-    # Using string reference to avoid circular imports
     case = relationship(
         "src.cases.models.Cases",
         back_populates="jobs",

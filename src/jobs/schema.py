@@ -75,14 +75,13 @@ class CompletedJobDetailsSchema(BaseModel):
 
 
 class CalendarEventSchema(BaseModel):
-    """Schema for calendar events matching frontend requirements"""
-    id: int  # job_no
-    case_id: int  # case.id
+    id: int
+    case_id: int
     title: str
     date: datetime
-    startTime: str  # Format: "HH:MM"
-    endTime: str  # Format: "HH:MM"
-    status: Optional[str] = None  # "pending" if videos are pending
+    startTime: str
+    endTime: str
+    status: Optional[str] = None
     computed_status: Optional[str] = None
     videosUploaded: Optional[int] = None
     totalVideos: Optional[int] = None

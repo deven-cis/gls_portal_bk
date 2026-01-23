@@ -1,17 +1,12 @@
-"""
-Sync configuration for two-stage database synchronization.
-Defines table configurations, dependency order, and field mappings.
-"""
-
 from typing import Dict, Any, List
 
 # Dependency order for syncing tables (must sync in this order)
 SYNC_ORDER = [
-    'Users',      # No dependencies
-    # 'Lists',      # No dependencies (but needed by Cases)
-    # 'Cases',      # Depends on Lists
-    # 'Timezones',  # No dependencies (but needed by Jobs)
-    # 'Jobs'        # Depends on Cases, Timezones
+    'Users',
+    'Lists',
+    'Cases',
+    'Timezones',
+    'Jobs'
 ]
 
 # Table configurations for Stage 1 (External DB → rb9_db)
@@ -188,7 +183,7 @@ STAGE2_TABLE_CONFIG = {
             'EnteredBy': 'entered_by'
         },
         'date_field': 'LastModified',
-        'model_class': None  # Lists table doesn't exist in new_gls_db
+        'model_class': None
     },
     'Cases': {
         'table_name': 'Cases',
@@ -224,6 +219,7 @@ STAGE2_TABLE_CONFIG = {
             'EnteredBy': 'entered_by'
         },
         'date_field': 'LastModified',
+        'date_field_table_alias': 'c',  
         'model_class': 'Cases'
     },
     'Timezones': {
@@ -254,7 +250,7 @@ STAGE2_TABLE_CONFIG = {
             'LastModifiedBy': 'last_modified_by'
         },
         'date_field': 'LastModified',
-        'model_class': None  # Timezones table doesn't exist in new_gls_db
+        'model_class': None
     },
     'Jobs': {
         'table_name': 'Jobs',
@@ -264,13 +260,12 @@ STAGE2_TABLE_CONFIG = {
         'query': '''
             SELECT 
                 j."JobNo",
-                j."JobDate",
+                j."JobDate"::timestamp AS "JobDate",
                 j."StartTime",
                 j."EndTime",
-                t."TimezoneFullName" AS "TimezoneName",
+                t."TimezoneName" AS "TimezoneName",
                 j."CaseNo",
                 j."JobType",
-                ls."ListValue" AS "Status",
                 j."ScheduledByEmail",
                 j."JobLocName",
                 j."JobLocAddress",
@@ -285,7 +280,6 @@ STAGE2_TABLE_CONFIG = {
                 j."Entered",
                 j."EnteredBy"
             FROM "Jobs" j
-            LEFT JOIN "Lists" ls ON j."Status" = ls."ListNo"
             LEFT JOIN "Timezones" t ON j."TimezoneNo" = t."TimezoneNo"
             WHERE j."CaseNo" IS NOT NULL
         ''',
@@ -297,7 +291,6 @@ STAGE2_TABLE_CONFIG = {
             'TimezoneName': 'timezone_name',
             'CaseNo': 'case_no',
             'JobType': 'job_type',
-            'Status': 'status',
             'ScheduledByEmail': 'scheduled_by_email',
             'JobLocName': 'job_loc_name',
             'JobLocAddress': 'job_loc_address',
@@ -313,6 +306,7 @@ STAGE2_TABLE_CONFIG = {
             'EnteredBy': 'entered_by'
         },
         'date_field': 'LastModified',
+        'date_field_table_alias': 'j',
         'model_class': 'Jobs'
     }
 }

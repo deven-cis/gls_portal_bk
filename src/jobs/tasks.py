@@ -1,85 +1,165 @@
 from datetime import datetime
+from sqlalchemy.exc import SQLAlchemyError, DatabaseError, OperationalError
 from src.core.celery_config import celery_app
 from src.core.database import SessionLocal
-from src.jobs.models import Jobs
+from src.jobs.models import Jobs, JobStatusEnum
 from src.core.logger import logger
-from src.attorneys.models import Attorneys
-from src.billings.models import Billings
-from src.additional_documents.models import AdditionalDocuments
-from src.equipment_time.models import EquipmentTime
-from src.witnesses.models import Witnesses
-from src.witness_videos.models import WitnessVideos
-from src.job_assignment.models import JobAssignment
+
 
 @celery_app.task(name='src.jobs.tasks.update_job_statuses')
 def update_job_statuses():
-    """
-    Celery task that runs every minute to automatically shift jobs from 
-    upcoming → pending when job_date is today.
+
+    start_time = datetime.utcnow()
+    session = None
     
-    Status transitions:
-    - UPCOMING → SESSION_NOT_STARTED (if today and before start_time)
-    - UPCOMING → SESSION_IN_PROGRESS (if today and after start_time)
-    """
-    session = SessionLocal()
     try:
-        now = datetime.now()
-        today = now.date()
-        current_time = now.time()
+        today = start_time.date()
+        logger.info(f"[Celery Task] Starting job status update at {start_time} (date: {today})")
         
-        # Print to console (visible in terminal)
-        print(f"\n{'='*70}")
-        print(f"🔄 [CELERY BEAT] Job Status Update - {now}")
-        print(f"{'='*70}")
-        logger.info(f"[Celery Task] Starting job status update at {now}")
+        session = SessionLocal()
         
-        # Find all upcoming jobs
-        upcoming_jobs = session.query(Jobs).filter(
-            Jobs.computed_status == "upcoming"
-        ).all()
+        jobs_count = session.query(Jobs).filter(
+            Jobs.job_date == today,
+            Jobs.computed_status == ''
+        ).count()
         
-        print(f"📊 Found {len(upcoming_jobs)} upcoming jobs to check\n")
+        if jobs_count == 0:
+            logger.info(f"[Celery Task] No jobs found with today's date ({today}) and empty status")
+            return {
+                "status": "success",
+                "updated_count": 0,
+                "duration_seconds": 0,
+                "start_time": str(start_time),
+                "end_time": str(datetime.utcnow())
+            }
         
-        updated_count = 0
+        logger.info(f"[Celery Task] Found {jobs_count} job(s) with today's date and empty status to update")
         
-        for job in upcoming_jobs:
-            job_date = job.job_date.date() if job.job_date else None
-            
-            # Check if job is today
-            if job_date == today:
-                # Job is today - update status based on start_time
-                if current_time >= job.start_time:
-                    job.computed_status = "session_in_progress"
-                    print(f"  ✅ Job #{job.id} (job_no: {job.job_no}) → SESSION_IN_PROGRESS")
-                    logger.info(f"Job {job.id} transitioned to SESSION_IN_PROGRESS")
-                else:
-                    job.computed_status = "session_not_started"
-                    time_until = (datetime.combine(today, job.start_time) - datetime.combine(today, current_time)).total_seconds() / 60
-                    print(f"  ⏳ Job #{job.id} (job_no: {job.job_no}) → SESSION_NOT_STARTED (starts in {int(time_until)} minutes)")
-                    logger.info(f"Job {job.id} transitioned to SESSION_NOT_STARTED")
-                
-                updated_count += 1
+        updated_count = session.query(Jobs).filter(
+            Jobs.job_date == today,
+            Jobs.computed_status == ''
+        ).update(
+            {Jobs.computed_status: JobStatusEnum.SESSION_NOT_STARTED.value},
+            synchronize_session=False
+        )
         
         session.commit()
         
-        print(f"\n✨ Successfully updated {updated_count} jobs")
-        print(f"{'='*70}\n")
-        logger.info(f"[Celery Task] Updated {updated_count} jobs")
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
+        
+        logger.info(
+            f"[Celery Task] Successfully updated {updated_count} job(s) to 'Session not started' status "
+            f"in {duration:.3f}s"
+        )
         
         return {
             "status": "success",
             "updated_count": updated_count,
-            "timestamp": str(now)
+            "duration_seconds": duration,
+            "start_time": str(start_time),
+            "end_time": str(end_time)
+        }
+        
+    except OperationalError as e:
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
+        
+        if session:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+        
+        logger.error(
+            f"[Celery Task] Database operational error updating job statuses: {str(e)} "
+            f"(duration: {duration:.3f}s)",
+            exc_info=True
+        )
+        return {
+            "status": "error",
+            "error": f"Database operational error: {str(e)}",
+            "error_type": "OperationalError",
+            "duration_seconds": duration,
+            "start_time": str(start_time),
+            "end_time": str(end_time)
+        }
+        
+    except DatabaseError as e:
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
+        
+        if session:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+        
+        logger.error(
+            f"[Celery Task] Database error updating job statuses: {str(e)} "
+            f"(duration: {duration:.3f}s)",
+            exc_info=True
+        )
+        return {
+            "status": "error",
+            "error": f"Database error: {str(e)}",
+            "error_type": "DatabaseError",
+            "duration_seconds": duration,
+            "start_time": str(start_time),
+            "end_time": str(end_time)
+        }
+        
+    except SQLAlchemyError as e:
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
+        
+        if session:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+        
+        logger.error(
+            f"[Celery Task] SQLAlchemy error updating job statuses: {str(e)} "
+            f"(duration: {duration:.3f}s)",
+            exc_info=True
+        )
+        return {
+            "status": "error",
+            "error": f"SQLAlchemy error: {str(e)}",
+            "error_type": "SQLAlchemyError",
+            "duration_seconds": duration,
+            "start_time": str(start_time),
+            "end_time": str(end_time)
         }
         
     except Exception as e:
+        end_time = datetime.utcnow()
+        duration = (end_time - start_time).total_seconds()
         
-        session.rollback()
-        print(f"\n❌ ERROR: {str(e)}\n")
-        logger.error(f"[Celery Task] Error updating job statuses: {str(e)}", exc_info=True)
+        if session:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+        
+        logger.error(
+            f"[Celery Task] Unexpected error updating job statuses: {str(e)} "
+            f"(duration: {duration:.3f}s)",
+            exc_info=True
+        )
         return {
             "status": "error",
-            "error": str(e)
+            "error": f"Unexpected error: {str(e)}",
+            "error_type": type(e).__name__,
+            "duration_seconds": duration,
+            "start_time": str(start_time),
+            "end_time": str(end_time)
         }
+        
     finally:
-        session.close()
+        if session:
+            try:
+                session.close()
+            except Exception as e:
+                logger.warning(f"[Celery Task] Error closing session: {str(e)}")

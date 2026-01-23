@@ -16,7 +16,6 @@ class BillingSchema(BaseModel):
 
 
 class AdditionalDocumentResponseSchema(BaseModel):
-    """Schema for additional document in billing response"""
     id: int
     file_name: Optional[str] = None
     file_path: Optional[str] = None
@@ -28,7 +27,6 @@ class AdditionalDocumentResponseSchema(BaseModel):
 
 
 class BillingWithDocumentsSchema(BaseModel):
-    """Complete billing response with associated documents"""
     id: Optional[int] = None
     job_no: int
     cancel_en_route: Optional[bool] = False

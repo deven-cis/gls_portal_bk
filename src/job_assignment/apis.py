@@ -14,6 +14,7 @@ from src.equipment_time.models import EquipmentTime
 from src.additional_documents.models import AdditionalDocuments
 from src.core.context import get_context
 from src.users.models import Users
+from src.jobs.models import JobStatusEnum
 
 async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -> JSONResponse:
     try:
@@ -98,7 +99,7 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
             .values(
                 entered_by=assignee_user_no,
                 last_modified_by=assignee_user_no,
-                computed_status="upcoming",
+                computed_status=JobStatusEnum.SESSION_NOT_STARTED.value,
                 actual_session_start_time=None,
                 actual_session_end_time=None,
                 session_duration=None,

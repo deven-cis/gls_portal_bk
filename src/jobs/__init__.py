@@ -73,8 +73,8 @@ async def list_jobs_by_case_route(
 
 @jobs_apis.get('/pending/')
 async def list_pending_jobs_route(
-    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    page: Optional[int] = Query(None, ge=1, description="Page number (starts from 1)"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Number of items per page"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> JSONResponse:
@@ -83,8 +83,8 @@ async def list_pending_jobs_route(
 
 @jobs_apis.get('/upcoming/')
 async def list_upcoming_jobs_route(
-    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    page: Optional[int] = Query(None, ge=1, description="Page number (starts from 1)"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="Number of items per page"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> JSONResponse:

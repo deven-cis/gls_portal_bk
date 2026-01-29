@@ -388,8 +388,8 @@ async def list_jobs_by_case(
         )
 
 async def list_pending_jobs(
-    page: int,
-    page_size: int,
+    page: Optional[int],
+    page_size: Optional[int],
     current_user: dict,
     db: Session
 ) -> JSONResponse:
@@ -411,6 +411,30 @@ async def list_pending_jobs(
             )
         )
         
+        # If pagination is not provided, return all jobs
+        if page is None or page_size is None:
+            jobs = query.order_by(Jobs.job_date.asc(), Jobs.start_time.asc()).all()
+            jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+            job_nos = [job["job_no"] for job in jobs_data]
+            status_by_job = get_video_upload_status(job_nos, db)
+            
+            for job_data in jobs_data:
+                job_status = status_by_job.get(job_data["job_no"], {"witness_videos_status": {}})
+                job_data["witness_videos_status"] = job_status.get("witness_videos_status", {})
+
+            logger.info(f"Found {len(jobs_data)} pending jobs (all) for user {user_entered_by}")
+            
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_200_OK,
+                    "message": "Pending jobs retrieved successfully",
+                    "success": True,
+                    "result": jobs_data
+                },
+                status_code=status.HTTP_200_OK
+            )
+        
+        # Pagination logic
         total = query.count()
         jobs = (
             query
@@ -463,8 +487,8 @@ async def list_pending_jobs(
         )
 
 async def list_upcoming_jobs(
-    page: int,
-    page_size: int,
+    page: Optional[int],
+    page_size: Optional[int],
     current_user: dict,
     db: Session
 ) -> JSONResponse:
@@ -486,6 +510,24 @@ async def list_upcoming_jobs(
             )
         )
         
+        # If pagination is not provided, return all jobs
+        if page is None or page_size is None:
+            jobs = query.order_by(Jobs.job_date.asc(), Jobs.start_time.asc()).all()
+            jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
+            
+            logger.info(f"Found {len(jobs_data)} upcoming jobs (all) for user {user_entered_by}")
+            
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_200_OK,
+                    "message": "Upcoming jobs retrieved successfully",
+                    "success": True,
+                    "result": jobs_data
+                },
+                status_code=status.HTTP_200_OK
+            )
+        
+        # Pagination logic
         total = query.count()
         jobs = (
             query

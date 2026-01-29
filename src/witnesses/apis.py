@@ -52,7 +52,15 @@ async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
 
         data = [WitnessSchema.model_validate(w).model_dump(mode="json") for w in witnesses]
         logger.info(f"Witnesses data witnesses list for job_no {job_no}: {len(data)}")
-        return data
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": f"Found {len(data)} witnesses",
+                "success": True,
+                "result": data,
+            },
+            status_code=status.HTTP_200_OK,
+        )
     except Exception as e:
         logger.error(
             f"Error getting witnesses list for job_no {job_no}: {str(e)}", exc_info=True

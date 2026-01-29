@@ -51,7 +51,7 @@ class Jobs(Base):
     actual_session_start_time = Column(DateTime, nullable=True)  
     actual_session_end_time = Column(DateTime, nullable=True)    
     session_duration = Column(String(255), nullable=True)
-    session_completed = Column(Boolean, default=False)
+    session_completed = Column(Boolean, default=False, server_default='false')
     video_upload_deadline = Column(DateTime, nullable=True)
     expected_video_count = Column(Integer, nullable=True)
     mark_is_done_case = Column(Boolean, default=False, server_default='false')

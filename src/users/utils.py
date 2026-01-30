@@ -7,7 +7,6 @@ from src.core.logger import logger
 def hash_password(password: str) -> bytes:
 
     try:
-        logger.info(f"Hashing password called for user password")
         return hashlib.sha512(password.encode("utf-8")).digest()
     except Exception as e:
         logger.error(f"Error hashing password: {str(e)}")
@@ -32,10 +31,7 @@ def verify_password(plain_password: str, hashed_password: Union[bytes, memoryvie
             hashed_password = ast.literal_eval(hashed_password.decode())
 
         computed_hash = hashlib.sha512(plain_password.encode("utf-8")).digest()
-        logger.info(f"Computed hash called")
-        logger.info(f"Hashed password called")
         result = hmac.compare_digest(computed_hash, hashed_password)
-        logger.info("verify password success")
         return result
     except Exception as e:
         logger.error(f"Error verifying password: {str(e)}")

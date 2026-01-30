@@ -27,7 +27,7 @@ async def get_current_user_profile(user_id: int, db: Session) -> JSONResponse:
                 status_code=status.HTTP_404_NOT_FOUND,
             )
         user_data = UserResponseSchema.model_validate(user).model_dump(mode="json")
-        logger.info("get current user profile success")
+        logger.info(f"get current user profile success for user: {user.email} (ID: {user.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -37,7 +37,7 @@ async def get_current_user_profile(user_id: int, db: Session) -> JSONResponse:
             status_code=status.HTTP_200_OK,
         )
     except Exception as e:
-        logger.error(f"Error getting current user profile: {str(e)}")
+        logger.error(f"Error getting current user profile for user {str(e)}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -72,7 +72,7 @@ async def upload_profile_picture(user_id: int, file: UploadFile, db: Session) ->
         db.commit()
         db.refresh(user)
         user_data = UserResponseSchema.model_validate(user).model_dump(mode="json")
-        logger.info("upload profile picture success")
+        logger.info(f"upload profile picture success for user: {user.email} (ID: {user.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -83,7 +83,7 @@ async def upload_profile_picture(user_id: int, file: UploadFile, db: Session) ->
         )
     except Exception as e:
         db.rollback()
-        logger.error("Error uploading profile picture: %s", str(e), exc_info=True)
+        logger.error(f"Error uploading profile picture for user {str(e)}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -117,7 +117,7 @@ async def remove_profile_picture(user_id: int, db: Session) -> JSONResponse:
         db.commit()
         db.refresh(user)
         user_data = UserResponseSchema.model_validate(user).model_dump(mode="json")
-        logger.info("remove profile picture success")
+        logger.info(f"remove profile picture success for user: {user.email} (ID: {user.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -128,7 +128,7 @@ async def remove_profile_picture(user_id: int, db: Session) -> JSONResponse:
         )
     except Exception as e:
         db.rollback()
-        logger.error("Error removing profile picture: %s", str(e), exc_info=True)
+        logger.error(f"Error removing profile picture for user {str(e)}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -142,7 +142,6 @@ async def remove_profile_picture(user_id: int, db: Session) -> JSONResponse:
 async def change_password(schema: PasswordChangeSchema, user_id: int, db: Session) -> JSONResponse:
 
     try:
-        logger.info("change password attempt")
         if schema.user_id != user_id:
             logger.info("change password attempt failed - user id mismatch")
             return JSONResponse(
@@ -157,7 +156,7 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
         user = Users.get(schema.user_id)
     
         if not user:
-            logger.info("user not found")
+            logger.info(f"user not found for user")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -168,7 +167,7 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
             )
         
         if not verify_password(schema.old_password, user.login_password):
-            logger.info("old password is incorrect")
+            logger.info(f"old password is incorrect for user")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -181,7 +180,7 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
         user.login_password = hash_password(schema.new_password)
         user.require_password_change = False
         user.save()
-        logger.info("change password success")
+        logger.info(f"change password success for user: {user.email} (ID: {user.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -192,7 +191,7 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
         )
  
     except Exception as e:
-        logger.error(f"Error changing password: {str(e)}")
+        logger.error(f"Error changing password for user {str(e)}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -208,7 +207,7 @@ async def assignee_users_list(db: Session) -> JSONResponse:
     try:
         list_of_users = db.query(Users).filter(Users.is_archived == False).all()
         list_of_users_data = [UserResponseSchema.model_validate(user).model_dump(mode="json") for user in list_of_users]
-        logger.info(f"Get list of users success")
+        logger.info(f"Get list of users success for {len(list_of_users_data)} users")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -218,7 +217,7 @@ async def assignee_users_list(db: Session) -> JSONResponse:
             status_code=status.HTTP_200_OK,
         )
     except Exception as e:
-        logger.error(f"Error getting list of users: {str(e)}")
+        logger.error(f"Error getting list of users: {str(e)}")  
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,

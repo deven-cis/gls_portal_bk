@@ -31,6 +31,7 @@ from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
+from src.core.timezone_utils import format_for_api
 
 
 async def get_cancelled_job_details(
@@ -300,20 +301,21 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         raise ValueError("No video paths provided")
     
     ffmpeg = None
-    try:
-        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True, check=False, timeout=5)
-        if result.returncode == 0 and result.stdout.strip():
-            ffmpeg = result.stdout.strip()
-            logger.info(f"Found ffmpeg via which: {ffmpeg}")
-    except Exception as e:
-        logger.warning(f"which command failed: {e}")
+    
+    for path in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/bin/ffmpeg', '/opt/bin/ffmpeg']:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            ffmpeg = path
+            logger.info(f"Found ffmpeg at: {ffmpeg}")
+            break
     
     if not ffmpeg:
-        for path in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/bin/ffmpeg', '/opt/bin/ffmpeg']:
-            if os.path.isfile(path) and os.access(path, os.X_OK):
-                ffmpeg = path
-                logger.info(f"Found ffmpeg at: {ffmpeg}")
-                break
+        try:
+            result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True, check=False, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                ffmpeg = result.stdout.strip()
+                logger.info(f"Found ffmpeg via which: {ffmpeg}")
+        except Exception:
+            pass
     
     if not ffmpeg:
         logger.error("FFmpeg not found in any location")
@@ -323,9 +325,9 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         )
     
     temp_dir = Path(tempfile.gettempdir())
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    merged_file_path = temp_dir / f"job_{job_no}_all_videos_{timestamp}.mp4"
-    concat_file = temp_dir / f"concat_list_{job_no}_{timestamp}.txt"
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    merged_file_path = temp_dir / f"job_{job_no}_all_videos_{date_str}.mp4"
+    concat_file = temp_dir / f"concat_list_{job_no}_{date_str}.txt"
     
     try:
         project_root = Path(__file__).resolve().parent.parent.parent
@@ -605,15 +607,18 @@ async def get_session_start_time(
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        session_start_time_is_on = True if job.actual_session_start_time else False
         if job.computed_status == JobStatusEnum.SESSION_IN_PROGRESS.value:
+            result = {}
+            if job.actual_session_start_time:
+                result = format_for_api(job.actual_session_start_time)
+            
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_200_OK,
                     "message": "Session is in progress",
                     "success": True,
                     "status": job.computed_status,
-                    "result": job.actual_session_start_time.isoformat() if session_start_time_is_on else {}
+                    "result": result
                 },
                 status_code=status.HTTP_200_OK
             )
@@ -698,7 +703,7 @@ async def start_session(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        job.actual_session_start_time = datetime.now()
+        job.actual_session_start_time = datetime.utcnow()
         job.computed_status = JobStatusEnum.SESSION_IN_PROGRESS.value
         
         db.commit()
@@ -713,7 +718,7 @@ async def start_session(
                 "success": True,
                 "result": {
                     "job_no": job.job_no,
-                    "start_time": job.actual_session_start_time.isoformat(),
+                    "start_time": format_for_api(job.actual_session_start_time),
                     "computed_status": job.computed_status
                 }
             },
@@ -770,7 +775,7 @@ async def end_session(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        job.actual_session_end_time = datetime.now()
+        job.actual_session_end_time = datetime.utcnow()
         duration = job.actual_session_end_time - job.actual_session_start_time
         total_seconds = int(duration.total_seconds())
         hours = total_seconds // 3600
@@ -790,7 +795,13 @@ async def end_session(
                 "status_code": status.HTTP_200_OK,
                 "message": "Session ended successfully",
                 "success": True,
-                "result": {}
+                "result": {
+                    "job_no": job.job_no,
+                    "start_time": format_for_api(job.actual_session_start_time),
+                    "end_time": format_for_api(job.actual_session_end_time),
+                    "duration": job.session_duration,
+                    "computed_status": job.computed_status
+                }
             },
             status_code=status.HTTP_200_OK
         )

@@ -24,7 +24,6 @@ class Base:
     @classmethod
     def get_queryset(cls):
         try:
-            logger.info(f"Getting queryset for get_queryset")
             db = cls.get_session()
             return db.query(cls)
         except Exception as e:
@@ -34,7 +33,6 @@ class Base:
     @classmethod
     def get_session(cls):
         try:
-            logger.info(f"Getting session for get_session")
             return get_context_db() or next(get_db())
         except Exception as e:
             logger.error(f"Error getting session: {str(e)}")
@@ -50,12 +48,10 @@ class Base:
                 entered_by = 0
 
             self.last_modified_by = entered_by
-            logger.info(f"Last modified by for save success")
             if not self.id:
                 self.entered_at = datetime.now()
                 self.entered_by = entered_by
                 db.add(self)
-            logger.info(f"Saving record for save success")
             db.commit()
             db.refresh(self)
             return self
@@ -90,17 +86,14 @@ class Base:
     @classmethod
     def check_exist(cls, filters: dict = {}):
         try:
-            logger.info(f"Checking exist for filters")
             if filters:
                 records = cls.fetch_records(filters)
                 if records:
-                    logger.info(f"Record exists for filters")
                     return True
                 else:
-                    logger.info(f"Record does not exist for filters")
                     return False    
             else:
                 return False
         except Exception as e:
-            logger.error(f"Error checking exist: {str(e)}")
+            logger.error(f"Error checking exist(check_exist): {str(e)}")
             return False

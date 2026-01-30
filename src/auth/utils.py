@@ -14,7 +14,6 @@ security = HTTPBearer()
 def create_forget_password_token(data: dict, expiration_delta: int = None):
 
     try:            
-        logger.info(f"Creating forget password token for user: {data.get('id')}")
         if not data.get('id'):
             logger.error(f"User ID is required for creating forget password token")
             return None
@@ -30,7 +29,6 @@ def create_forget_password_token(data: dict, expiration_delta: int = None):
 
 def verify_token(token: str):  
     from src.users.models import Users
-    logger.info(f"Verifying token")
     try:
         decoded_data = decode_token(token)
     
@@ -51,13 +49,11 @@ def create_tokens(data: dict, token_type: str = 'access') -> dict:
     to_encode = data.copy()
     
     if token_type == 'access':
-        logger.info(f"Creating access token for user: {data.get('id')}")
         expires_delta = timedelta(seconds=config.ACCESS_TOKEN_EXPIRATION_TIME)
     else:
         expires_delta = timedelta(seconds=config.REFRESH_TOKEN_EXPIRATION_TIME)
     
     expire = datetime.utcnow() + expires_delta
-    logger.info(f"Expire: {expire}")
     to_encode.update({
         'exp': expire,
         'type': token_type,
@@ -73,11 +69,8 @@ def create_tokens(data: dict, token_type: str = 'access') -> dict:
 
 def create_access_token(data: dict) -> dict:
     try:
-        logger.info(f"Creating access token for user: {data.get('id')}")
         access_token = create_tokens(data, 'access')
         refresh_token = create_tokens(data, 'refresh')
-        logger.info(f"Access token created for user: {data.get('id')}")
-        logger.info(f"Refresh token created for user: {data.get('id')}")
 
         return {
             'access_token': access_token['token'],
@@ -87,7 +80,7 @@ def create_access_token(data: dict) -> dict:
             'entered_by': data.get('entered_by')
         }
     except Exception as e:
-        logger.error(f"Error creating access token: {str(e)}")
+        logger.error(f"Error creating access token({data.get('id')}): {str(e)}")
         return None
 
 def decode_token(token: str, token_type: str = None):
@@ -100,7 +93,7 @@ def decode_token(token: str, token_type: str = None):
             options={"require_exp": True}
         )
         if token_type and payload.get('type') != token_type:
-            logger.warning(f"Invalid token type. Expected {token_type}, got {payload.get('type')}")
+            logger.warning(f"Invalid token type. Expected.")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Invalid token type. Expected {token_type}"
@@ -150,13 +143,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             )
             
         if getattr(user, 'require_password_change', False):
-            logger.info(f"Password change required for user: {user.login_name} (ID: {user.id})")
+            logger.info(f"Password change required for user: {user.id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Password change required"
             )
         
-        set_context(login_name=user.login_name)
+        set_context(login_name=user.email)
         set_context(user_id=user.id)
         set_context(entered_by=user.user_no)
         
@@ -164,13 +157,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         decoded_data.pop('type', None)
         decoded_data.pop('iat', None)
         
-        logger.info(f"Current user authenticated: {user.login_name} (ID: {user.id})")
+        logger.info(f"Current user authenticated: {user.id}")
         return decoded_data
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get_current_user: {str(e)}", exc_info=True)
+        logger.error(f"Error in get_current_user({user.id}): {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not validate credentials"

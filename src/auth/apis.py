@@ -13,18 +13,18 @@ from src.core.utils import send_email
 from src.core.config import config
 from src.auth.utils import create_forget_password_token, verify_token
 from src.users.utils import hash_password
-from src.auth.schema import PasswordResetSchema, LogoutResponseSchema, RefreshTokenSchema
+from src.auth.schema import PasswordResetSchema, RefreshTokenSchema
 from src.users.models import Users
 from fastapi import Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials 
 from fastapi.responses import JSONResponse
+from src.core.timezone_utils import get_default_timezone, get_timezone_abbreviation
 
 
 async def login_user(data: LoginCredentialSchema):
     try:
         logger.info(f"Login attempt for user: {data.login_name}")
         
-        users = Users.fetch_records({"login_name": data.login_name})
+        users = Users.fetch_records({"email": data.login_name})
         if not users:
             logger.warning(f"Login failed - user not found: {data.login_name}")
             return JSONResponse(
@@ -50,7 +50,7 @@ async def login_user(data: LoginCredentialSchema):
             )
         
         token_data = create_access_token({
-            'login_name': user_obj.login_name,
+            'login_name': user_obj.email,
             'id': user_obj.id,
             'entered_by': getattr(user_obj, 'entered_by', None)
         })
@@ -60,9 +60,8 @@ async def login_user(data: LoginCredentialSchema):
             'full_name': user_obj.full_name or '',
             'email': user_obj.email or '',
             'login_name': user_obj.login_name or '',
-            'require_password_change': bool(getattr(user_obj, 'require_password_change', False)),
-            'entered_by': getattr(user_obj, 'entered_by', None),
-            'last_modified_by': getattr(user_obj, 'last_modified_by', None)
+            'timezone': get_default_timezone(),
+            'timezone_abbr': get_timezone_abbreviation()
         }
         
         response = {
@@ -86,7 +85,7 @@ async def login_user(data: LoginCredentialSchema):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f'Login error for user {data.login_name}: {str(e)}', exc_info=True)
+        logger.error(f'Login error for user {data.login_name}: {str(e)}')
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -98,7 +97,6 @@ async def login_user(data: LoginCredentialSchema):
 
 async def refresh_token(data: RefreshTokenSchema):
     try:
-        logger.info("Token refresh attempt")
         payload = decode_token(data.refresh_token)
         
         if payload.get('type') != 'refresh':
@@ -125,7 +123,7 @@ async def refresh_token(data: RefreshTokenSchema):
             )
             
         token_data = {
-            'login_name': user.login_name,
+            'login_name': user.email,
             'id': user.id,
             'entered_by': getattr(user, 'entered_by', None)
         }
@@ -137,9 +135,8 @@ async def refresh_token(data: RefreshTokenSchema):
             'full_name': user.full_name or '',
             'email': user.email or '',
             'login_name': user.login_name or '',
-            'require_password_change': bool(getattr(user, 'require_password_change', False)),
-            'entered_by': getattr(user, 'entered_by', None),
-            'last_modified_by': getattr(user, 'last_modified_by', None)
+            'timezone': get_default_timezone(),
+            'timezone_abbr': get_timezone_abbreviation()
         }
         
         response = {
@@ -150,7 +147,7 @@ async def refresh_token(data: RefreshTokenSchema):
             'user': user_response
         }
         
-        logger.info(f"Token refreshed successfully for user: {user.login_name} (ID: {user.id})")
+        logger.info(f"Token refreshed successfully for user: {user.email} (ID: {user.id})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -199,12 +196,12 @@ async def forget_password(email: EmailStr):
  
         if users:
             user = users[0]
-            logger.info(f"Password reset link generation for user: {user.login_name} (ID: {user.id})")
+            logger.info(f"Password reset link generation for user: {user.email} (ID: {user.id})")
             token = create_forget_password_token(
                 {"email": user.email, "id": user.id}
             )
             if not token:
-                logger.error(f"Error creating forget password token for user: {user.login_name} (ID: {user.id})")
+                logger.error(f"Error creating forget password token for user: {user.email} (ID: {user.id})")
                 return JSONResponse(
                     content={
                         "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -214,7 +211,7 @@ async def forget_password(email: EmailStr):
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             password_reset_link = f"{config.FRONTEND_URL}reset-password?token={token}"
-            logger.info(f"Password reset link generated for user: {user.login_name} (ID: {user.id})")
+            logger.info(f"Password reset link generated for user: {user.email} (ID: {user.id})")
             send_email(
                 receiver_email=user.email,
                 subject="Password Reset Request",
@@ -236,16 +233,14 @@ async def reset_password(
     schema: PasswordResetSchema
 ):
     try:
-        logger.info("Password reset attempt")
         decoded_data = verify_token(schema.token)
         user = Users.get(decoded_data.get('id'))
         
-        logger.info(f"Resetting password for user: {user.login_name} (ID: {user.id})")
         user.login_password = hash_password(schema.new_password)
         user.require_password_change = False
         user.save()
         
-        logger.info(f"Password reset successfully for user: {user.login_name} (ID: {user.id})")
+        logger.info(f"Password reset successfully for user: {user.email} (ID: {user.id})")
  
         return {"message": "Password reset successfully", "success": True}
     except Exception as e:

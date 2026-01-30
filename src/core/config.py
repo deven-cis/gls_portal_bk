@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     APPLICATION_VERSION: str = "0.1.0"
     EMAIL_EXPIRATION_DELTA: int = 0
     
+    # Timezone Configuration
+    DEFAULT_TIMEZONE_PRODUCTION: str = "America/New_York"
+    DEFAULT_TIMEZONE_DEVELOPMENT: str = "Asia/Kolkata" 
+    
     # Database
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "admin123"
@@ -32,7 +36,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
     
     # FastAPI
-    APP_ENV: str = "development"
+    APP_ENV: str = 'staging'
     DEBUG: bool = True
     LOG_LEVEL: str = "info"
     

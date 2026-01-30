@@ -299,61 +299,62 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
     if not video_paths:
         raise ValueError("No video paths provided")
     
+    ffmpeg = None
+    try:
+        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True, check=False, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            ffmpeg = result.stdout.strip()
+            logger.info(f"Found ffmpeg via which: {ffmpeg}")
+    except Exception as e:
+        logger.warning(f"which command failed: {e}")
+    
+    if not ffmpeg:
+        for path in ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/bin/ffmpeg', '/opt/bin/ffmpeg']:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                ffmpeg = path
+                logger.info(f"Found ffmpeg at: {ffmpeg}")
+                break
+    
+    if not ffmpeg:
+        logger.error("FFmpeg not found in any location")
+        raise HTTPException(
+            status_code=500, 
+            detail="FFmpeg not found. Install it: sudo apt install ffmpeg -y"
+        )
+    
     temp_dir = Path(tempfile.gettempdir())
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    merged_filename = f"job_{job_no}_all_videos_{timestamp}.mp4"
-    merged_file_path = temp_dir / merged_filename
+    merged_file_path = temp_dir / f"job_{job_no}_all_videos_{timestamp}.mp4"
     concat_file = temp_dir / f"concat_list_{job_no}_{timestamp}.txt"
     
     try:
         project_root = Path(__file__).resolve().parent.parent.parent
-        valid_video_count = 0
         
         with open(concat_file, 'w') as f:
             for video_path in video_paths:
-                abs_video_path = (project_root / video_path).resolve() if not os.path.isabs(video_path) else Path(video_path).resolve()
-                
-                if not abs_video_path.exists():
-                    logger.warning(f"Video file not found: {abs_video_path} (original: {video_path})")
-                    continue
-                
-                escaped_path = str(abs_video_path).replace("'", "'\\''")
-                f.write(f"file '{escaped_path}'\n")
-                valid_video_count += 1
+                abs_path = (project_root / video_path).resolve() if not os.path.isabs(video_path) else Path(video_path).resolve()
+                if abs_path.exists():
+                    f.write(f"file '{str(abs_path).replace(chr(39), chr(39)+chr(92)+chr(92)+chr(39)+chr(39))}'\n")
         
-        if valid_video_count == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No valid video files found to merge"
-            )
-        
-        ffmpeg_cmd = [
-            'ffmpeg', '-f', 'concat', '-safe', '0',
-            '-i', str(concat_file), '-c', 'copy', '-y',
-            str(merged_file_path)
-        ]
-        
-        subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=True)
-        logger.info(f"Successfully merged {valid_video_count} videos for job_no {job_no}")
+        result = subprocess.run(
+            [ffmpeg, '-f', 'concat', '-safe', '0', '-i', str(concat_file), '-c', 'copy', '-y', str(merged_file_path)], 
+            capture_output=True, text=True, check=True, timeout=300
+        )
+        logger.info(f"Merged videos for job_no {job_no}")
         return merged_file_path
         
     except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg error merging videos: {e.stderr}", exc_info=True)
+        logger.warning(f"FFmpeg copy failed, retrying with re-encoding: {e.stderr}")
         try:
-            logger.info("Retrying with re-encoding...")
-            ffmpeg_cmd = [
-                'ffmpeg', '-f', 'concat', '-safe', '0',
-                '-i', str(concat_file), '-c:v', 'libx264',
-                '-c:a', 'aac', '-y', str(merged_file_path)
-            ]
-            subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=True)
-            logger.info(f"Successfully merged videos with re-encoding for job_no {job_no}")
+            subprocess.run(
+                [ffmpeg, '-f', 'concat', '-safe', '0', '-i', str(concat_file), '-c:v', 'libx264', '-c:a', 'aac', '-y', str(merged_file_path)], 
+                capture_output=True, text=True, check=True, timeout=600
+            )
+            logger.info(f"Merged videos with re-encoding for job_no {job_no}")
             return merged_file_path
         except subprocess.CalledProcessError as e2:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to merge videos: {e2.stderr}. Please ensure FFmpeg is installed."
-            )
+            logger.error(f"FFmpeg re-encoding failed: {e2.stderr}")
+            raise HTTPException(status_code=500, detail=f"Video merge failed: {e2.stderr}")
     finally:
         if concat_file.exists():
             concat_file.unlink()

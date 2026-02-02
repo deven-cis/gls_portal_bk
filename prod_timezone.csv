@@ -1,0 +1,88 @@
+TimezoneNo,TimezoneName,TimezoneFullName,StandardBias,DaylightBias,IsActive,LastModified,LastModifiedBy
+1001,Dateline Standard Time,(GMT-12:00) International Date Line West,720,660,False,2018-11-03 19:19:10.570000,1
+1002,Samoa Standard Time,"(GMT-11:00) Midway Island, Samoa",660,600,True,2018-11-03 19:19:10.570000,1
+1003,Hawaiian Standard Time,(GMT-10:00) Hawaii,600,540,True,2018-11-03 19:19:10.570000,1
+1004,Alaskan Standard Time,(GMT-09:00) Alaska,540,480,True,2018-11-03 19:19:10.570000,1
+1005,Pacific Standard Time,(GMT-08:00) Pacific Time (US & Canada),480,420,True,2018-11-03 19:19:10.570000,1
+1006,Pacific Standard Time (Mexico),"(GMT-08:00) Tijuana, Baja California",480,420,False,2018-11-03 19:19:10.570000,1
+1007,US Mountain Standard Time,(GMT-07:00) Arizona,420,360,False,2018-11-03 19:19:10.570000,1
+1008,Mountain Standard Time (Mexico),"(GMT-07:00) Chihuahua, La Paz, Mazatlan - New",420,360,False,2018-11-03 19:19:10.570000,1
+1009,Mexico Standard Time 2,"(GMT-07:00) Chihuahua, La Paz, Mazatlan - Old",420,360,False,2018-11-03 19:19:10.570000,1
+1010,Mountain Standard Time,(GMT-07:00) Mountain Time (US & Canada),420,360,True,2018-11-03 19:19:10.570000,1
+1011,Central America Standard Time,(GMT-06:00) Central America,360,300,False,2018-11-03 19:19:10.570000,1
+1012,Central Standard Time,(GMT-06:00) Central Time (US & Canada),360,300,True,2018-11-03 19:19:10.570000,1
+1013,Central Standard Time (Mexico),"(GMT-06:00) Guadalajara, Mexico City, Monterrey - New",360,300,False,2018-11-03 19:19:10.570000,1
+1014,Mexico Standard Time,"(GMT-06:00) Guadalajara, Mexico City, Monterrey - Old",360,300,False,2018-11-03 19:19:10.570000,1
+1015,Canada Central Standard Time,(GMT-06:00) Saskatchewan,360,300,False,2018-11-03 19:19:10.570000,1
+1016,SA Pacific Standard Time,"(GMT-05:00) Bogota, Lima, Quito, Rio Branco",300,240,False,2018-11-03 19:19:10.570000,1
+1017,Eastern Standard Time,(GMT-05:00) Eastern Time (US & Canada),300,240,True,2018-11-03 19:19:10.570000,1
+1018,US Eastern Standard Time,(GMT-05:00) Indiana (East),300,240,False,2018-11-03 19:19:10.570000,1
+1019,Venezuela Standard Time,(GMT-04:30) Caracas,270,210,False,2018-11-03 19:19:10.570000,1
+1020,Atlantic Standard Time,(GMT-04:00) Atlantic Time (Canada),240,180,False,2018-11-03 19:19:10.570000,1
+1021,SA Western Standard Time,(GMT-04:00) La Paz,240,180,False,2018-11-03 19:19:10.570000,1
+1022,Central Brazilian Standard Time,(GMT-04:00) Manaus,240,180,False,2018-11-03 19:19:10.570000,1
+1023,Pacific SA Standard Time,(GMT-04:00) Santiago,240,180,False,2018-11-03 19:19:10.570000,1
+1024,Newfoundland Standard Time,(GMT-03:30) Newfoundland,210,150,False,2018-11-03 19:19:10.570000,1
+1025,E. South America Standard Time,(GMT-03:00) Brasilia,180,120,False,2018-11-03 19:19:10.570000,1
+1026,SA Eastern Standard Time,"(GMT-03:00) Buenos Aires, Georgetown",180,120,False,2018-11-03 19:19:10.570000,1
+1027,Greenland Standard Time,(GMT-03:00) Greenland,180,120,False,2018-11-03 19:19:10.570000,1
+1028,Montevideo Standard Time,(GMT-03:00) Montevideo,180,120,False,2018-11-03 19:19:10.570000,1
+1029,Mid-Atlantic Standard Time,(GMT-02:00) Mid-Atlantic,120,60,False,2018-11-03 19:19:10.570000,1
+1030,Azores Standard Time,(GMT-01:00) Azores,60,1,False,2018-11-03 19:19:10.570000,1
+1031,Cape Verde Standard Time,(GMT-01:00) Cape Verde Is.,60,1,False,2018-11-03 19:19:10.570000,1
+1032,Greenwich Standard Time,"(GMT) Casablanca, Monrovia, Reykjavik",1,-60,False,2018-11-03 19:19:10.570000,1
+1033,GMT Standard Time,"(GMT) Greenwich Mean Time : Dublin, Edinburgh, Lisbon, London",1,-60,False,2018-11-03 19:19:10.570000,1
+1034,W. Europe Standard Time,"(GMT+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna",-60,-120,False,2018-11-03 19:19:10.570000,1
+1035,Central Europe Standard Time,"(GMT+01:00) Belgrade, Bratislava, Budapest, Ljubljana, Prague",-60,-120,False,2018-11-03 19:19:10.570000,1
+1036,Romance Standard Time,"(GMT+01:00) Brussels, Copenhagen, Madrid, Paris",-60,-120,False,2018-11-03 19:19:10.570000,1
+1037,Central European Standard Time,"(GMT+01:00) Sarajevo, Skopje, Warsaw, Zagreb",-60,-120,False,2018-11-03 19:19:10.570000,1
+1038,W. Central Africa Standard Time,(GMT+01:00) West Central Africa,-60,-120,False,2018-11-03 19:19:10.570000,1
+1039,Jordan Standard Time,(GMT+02:00) Amman,-120,-180,False,2018-11-03 19:19:10.570000,1
+1040,GTB Standard Time,"(GMT+02:00) Athens, Bucharest, Istanbul",-120,-180,False,2018-11-03 19:19:10.570000,1
+1041,Middle East Standard Time,(GMT+02:00) Beirut,-120,-180,False,2018-11-03 19:19:10.570000,1
+1042,Egypt Standard Time,(GMT+02:00) Cairo,-120,-180,False,2018-11-03 19:19:10.570000,1
+1043,South Africa Standard Time,"(GMT+02:00) Harare, Pretoria",-120,-1801,False,2018-11-03 19:19:10.570000,1
+1044,FLE Standard Time,"(GMT+02:00) Helsinki, Kyiv, Riga, Sofia, Tallinn, Vilnius",-120,-180,False,2018-11-03 19:19:10.570000,1
+1045,Israel Standard Time,(GMT+02:00) Jerusalem,-120,-180,False,2018-11-03 19:19:10.570000,1
+1046,E. Europe Standard Time,(GMT+02:00) Minsk,-120,-180,False,2018-11-03 19:19:10.570000,1
+1047,Namibia Standard Time,(GMT+02:00) Windhoek,-120,-60,False,2018-11-03 19:19:10.570000,1
+1048,Arabic Standard Time,(GMT+03:00) Baghdad,-180,-240,False,2018-11-03 19:19:10.570000,1
+1049,Arab Standard Time,"(GMT+03:00) Kuwait, Riyadh",-180,-240,False,2018-11-03 19:19:10.570000,1
+1050,Russian Standard Time,"(GMT+03:00) Moscow, St. Petersburg, Volgograd",-180,-240,False,2018-11-03 19:19:10.570000,1
+1051,E. Africa Standard Time,(GMT+03:00) Nairobi,-180,-240,False,2018-11-03 19:19:10.570000,1
+1052,Georgian Standard Time,(GMT+03:00) Tbilisi,-180,-240,False,2018-11-03 19:19:10.570000,1
+1053,Iran Standard Time,(GMT+03:30) Tehran,-210,-270,False,2018-11-03 19:19:10.570000,1
+1054,Arabian Standard Time,"(GMT+04:00) Abu Dhabi, Muscat",-240,-300,False,2018-11-03 19:19:10.570000,1
+1055,Azerbaijan Standard Time,(GMT+04:00) Baku,-240,-300,False,2018-11-03 19:19:10.570000,1
+1056,Caucasus Standard Time,(GMT+04:00) Caucasus Standard Time,-240,-300,False,2018-11-03 19:19:10.570000,1
+1057,Armenian Standard Time,(GMT+04:00) Yerevan,-240,-300,False,2018-11-03 19:19:10.570000,1
+1058,Afghanistan Standard Time,(GMT+04:30) Kabul,-270,-330,False,2018-11-03 19:19:10.570000,1
+1059,Ekaterinburg Standard Time,(GMT+05:00) Ekaterinburg,-300,-360,False,2018-11-03 19:19:10.570000,1
+1060,West Asia Standard Time,"(GMT+05:00) Islamabad, Karachi, Tashkent",-300,-360,False,2018-11-03 19:19:10.570000,1
+1061,India Standard Time,"(GMT+05:30) Chennai, Kolkata, Mumbai, New Delhi",-330,-390,False,2018-11-03 19:19:10.570000,1
+1062,Sri Lanka Standard Time,(GMT+05:30) Sri Jayawardenepura,-330,-390,False,2018-11-03 19:19:10.570000,1
+1063,Nepal Standard Time,(GMT+05:45) Kathmandu,-345,-405,False,2018-11-03 19:19:10.570000,1
+1064,N. Central Asia Standard Time,"(GMT+06:00) Almaty, Novosibirsk",-360,-420,False,2018-11-03 19:19:10.570000,1
+1065,Central Asia Standard Time,"(GMT+06:00) Astana, Dhaka",-360,-420,False,2018-11-03 19:19:10.570000,1
+1066,Myanmar Standard Time,(GMT+06:30) Yangon (Rangoon),-390,-450,False,2018-11-03 19:19:10.570000,1
+1067,SE Asia Standard Time,"(GMT+07:00) Bangkok, Hanoi, Jakarta",-420,-480,False,2018-11-03 19:19:10.570000,1
+1068,North Asia Standard Time,(GMT+07:00) Krasnoyarsk,-420,-480,False,2018-11-03 19:19:10.570000,1
+1069,China Standard Time,"(GMT+08:00) Beijing, Chongqing, Hong Kong, Urumqi",-480,-540,False,2018-11-03 19:19:10.570000,1
+1070,North Asia East Standard Time,"(GMT+08:00) Irkutsk, Ulaan Bataar",-480,-540,False,2018-11-03 19:19:10.570000,1
+1071,Singapore Standard Time,"(GMT+08:00) Kuala Lumpur, Singapore",-480,-540,False,2018-11-03 19:19:10.570000,1
+1072,W. Australia Standard Time,(GMT+08:00) Perth,-480,-540,False,2018-11-03 19:19:10.570000,1
+1073,Taipei Standard Time,(GMT+08:00) Taipei,-480,-540,False,2018-11-03 19:19:10.570000,1
+1074,Tokyo Standard Time,"(GMT+09:00) Osaka, Sapporo, Tokyo",-540,-600,False,2018-11-03 19:19:10.570000,1
+1075,Korea Standard Time,(GMT+09:00) Seoul,-540,-600,False,2018-11-03 19:19:10.570000,1
+1076,Yakutsk Standard Time,(GMT+09:00) Yakutsk,-540,-600,False,2018-11-03 19:19:10.570000,1
+1077,Cen. Australia Standard Time,(GMT+09:30) Adelaide,-570,-630,False,2018-11-03 19:19:10.570000,1
+1078,AUS Central Standard Time,(GMT+09:30) Darwin,-570,-630,False,2018-11-03 19:19:10.570000,1
+1079,E. Australia Standard Time,(GMT+10:00) Brisbane,-600,-660,False,2018-11-03 19:19:10.570000,1
+1080,AUS Eastern Standard Time,"(GMT+10:00) Canberra, Melbourne, Sydney",-600,-660,False,2018-11-03 19:19:10.570000,1
+1081,West Pacific Standard Time,"(GMT+10:00) Guam, Port Moresby",-600,-660,False,2018-11-03 19:19:10.570000,1
+1082,Tasmania Standard Time,(GMT+10:00) Hobart,-600,-660,False,2018-11-03 19:19:10.570000,1
+1083,Vladivostok Standard Time,(GMT+10:00) Vladivostok,-600,-660,False,2018-11-03 19:19:10.570000,1
+1084,Central Pacific Standard Time,"(GMT+11:00) Magadan, Solomon Is., New Caledonia",-660,-720,False,2018-11-03 19:19:10.570000,1
+1085,New Zealand Standard Time,"(GMT+12:00) Auckland, Wellington",-720,-780,False,2018-11-03 19:19:10.570000,1
+1086,Fiji Standard Time,"(GMT+12:00) Fiji, Kamchatka, Marshall Is.",-720,-780,False,2018-11-03 19:19:10.570000,1
+1087,Tonga Standard Time,(GMT+13:00) Nuku'alofa,-780,-840,False,2018-11-03 19:19:10.570000,1

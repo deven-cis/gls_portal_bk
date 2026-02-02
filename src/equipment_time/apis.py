@@ -15,6 +15,7 @@ from src.additional_documents.models import AdditionalDocuments
 from src.core.file_utils import save_multiple_files
 from src.core.logger import logger
 from src.core.context import get_context
+from src.core.timezone_utils import get_timezone_now
 
 
 async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
@@ -107,7 +108,8 @@ async def create_equipment_time(
     db: Session,
 ) -> JSONResponse:
     try:
-        logger.info(f"Creating equipment_time for job {job_no}")
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         from src.jobs.models import Jobs
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
@@ -133,7 +135,11 @@ async def create_equipment_time(
             time_after=time_after
         )
         
-        equipment_time.save()
+        equipment_time.last_modified_at = now
+        equipment_time.last_modified_by = entered_by
+        db.add(equipment_time)
+        db.commit()
+        db.refresh(equipment_time)
         
         logger.info(f"Created equipment_time with id={equipment_time.id} for job_no={job_no}")
         
@@ -156,8 +162,12 @@ async def create_equipment_time(
                                 equipment_time_id=equipment_time.id,
                                 file_name=file_name,
                                 file_path=file_path,
+                                entered_by=entered_by,
+                                last_modified_by=entered_by,
+                                entered_at=now,
+                                last_modified_at=now,
                             )
-                            doc.save()
+                            db.add(doc)
                             documents_created += 1
                             logger.info(f"Successfully saved document: id={doc.id}, file_name={file_name}, file_path={file_path}, equipment_time_id={equipment_time.id}")
                         except Exception as doc_error:
@@ -217,6 +227,7 @@ async def create_equipment_time(
     except HTTPException:
         raise
     except Exception as e:
+        db.rollback()
         logger.error(f"Error creating equipment_time for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
@@ -241,6 +252,8 @@ async def update_equipment_time(
     db: Session,
 ) -> JSONResponse:
     try:
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         equipment_time = db.query(EquipmentTime).filter(
             EquipmentTime.id == equipment_time_id,
             EquipmentTime.is_archived == False
@@ -311,7 +324,9 @@ async def update_equipment_time(
                                 logger.warning(f"Failed to delete file {doc.file_path}: {str(e)}")
                         
                         doc.is_archived = True
-                        doc.save()
+                        doc.last_modified_at = now
+                        doc.last_modified_by = entered_by
+                        db.add(doc)
                         documents_removed += 1
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Invalid document ID: {doc_id_str}, error: {str(e)}")
@@ -324,7 +339,6 @@ async def update_equipment_time(
         if files:
             saved_files = await save_multiple_files(files, "equipment_time")
             logger.info(f"Uploading {len(saved_files)} file(s) for equipment_time_id {equipment_time.id}")
-            entered_by = get_context('entered_by') or 0
             for file_name, file_path in saved_files:
                 doc = AdditionalDocuments(
                     job_no=equipment_time.job_no,
@@ -333,19 +347,21 @@ async def update_equipment_time(
                     file_path=file_path,
                     entered_by=entered_by,
                     last_modified_by=entered_by,
-                    entered_at=datetime.now(),
-                    last_modified_at=datetime.now(),
+                    entered_at=now,
+                    last_modified_at=now,
                 )
                 db.add(doc)
-                db.commit()
-                db.refresh(doc)
                 documents_uploaded += 1
                 logger.info(f"Uploaded document: id={doc.id}, file_name={file_name}, equipment_time_id={equipment_time.id}")
         
         if documents_uploaded > 0:
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
         
-        equipment_time.save()
+        equipment_time.last_modified_at = now
+        equipment_time.last_modified_by = entered_by
+        db.add(equipment_time)
+        db.commit()
+        db.refresh(equipment_time)
         
         time_after_str = None
         if equipment_time.time_after:
@@ -394,12 +410,15 @@ async def update_equipment_time(
 
 async def delete_equipment_time(equipment_time_id: int, db: Session) -> JSONResponse:
     try:
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         equipment_time = db.query(EquipmentTime).filter(
             EquipmentTime.id == equipment_time_id,
             EquipmentTime.is_archived == False
         ).first()
         
         if not equipment_time:
+            logger.error(f"Equipment time with ID {equipment_time_id} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
@@ -411,7 +430,11 @@ async def delete_equipment_time(equipment_time_id: int, db: Session) -> JSONResp
             )
         
         equipment_time.is_archived = True
-        equipment_time.save()
+        equipment_time.last_modified_at = now
+        equipment_time.last_modified_by = entered_by
+        db.add(equipment_time)
+        db.commit()
+        db.refresh(equipment_time)
         
         logger.info(f"Successfully deleted equipment_time {equipment_time_id}")
         
@@ -426,6 +449,7 @@ async def delete_equipment_time(equipment_time_id: int, db: Session) -> JSONResp
         )
     except Exception as e:
         logger.error(f"Error deleting equipment_time {equipment_time_id}: {str(e)}", exc_info=True)
+        db.rollback()
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,

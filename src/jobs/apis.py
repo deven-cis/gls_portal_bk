@@ -31,7 +31,6 @@ from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
-from src.core.timezone_utils import format_for_api
 
 
 async def get_cancelled_job_details(
@@ -249,7 +248,7 @@ async def get_mark_as_done_status(
             )
         
         mark_as_done_status = MarkJobAsDoneSchema.model_validate(job).model_dump()
-        logger.info(f"Mark as done status: {mark_as_done_status}")
+        logger.info(f"Mark as done status: {job.job_no}")
         
         return JSONResponse(
             content={
@@ -610,8 +609,8 @@ async def get_session_start_time(
         if job.computed_status == JobStatusEnum.SESSION_IN_PROGRESS.value:
             result = {}
             if job.actual_session_start_time:
-                result = format_for_api(job.actual_session_start_time)
-            
+                result = job.actual_session_start_time.isoformat()
+            logger.info(f"Session start time: {result}")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_200_OK,
@@ -703,7 +702,7 @@ async def start_session(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        job.actual_session_start_time = datetime.utcnow()
+        job.actual_session_start_time = datetime.now()
         job.computed_status = JobStatusEnum.SESSION_IN_PROGRESS.value
         
         db.commit()
@@ -718,7 +717,7 @@ async def start_session(
                 "success": True,
                 "result": {
                     "job_no": job.job_no,
-                    "start_time": format_for_api(job.actual_session_start_time),
+                    "start_time": job.actual_session_start_time.isoformat(),
                     "computed_status": job.computed_status
                 }
             },
@@ -797,8 +796,8 @@ async def end_session(
                 "success": True,
                 "result": {
                     "job_no": job.job_no,
-                    "start_time": format_for_api(job.actual_session_start_time),
-                    "end_time": format_for_api(job.actual_session_end_time),
+                    "start_time": job.actual_session_start_time,
+                    "end_time": job.actual_session_end_time,
                     "duration": job.session_duration,
                     "computed_status": job.computed_status
                 }

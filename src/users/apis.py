@@ -1,4 +1,5 @@
 from datetime import datetime
+from src.core.timezone_utils import get_timezone_now
 from fastapi import status
 from fastapi.responses import JSONResponse
 from fastapi import UploadFile
@@ -49,8 +50,7 @@ async def get_current_user_profile(user_id: int, db: Session) -> JSONResponse:
 
 async def upload_profile_picture(user_id: int, file: UploadFile, db: Session) -> JSONResponse:
     entered_by = get_context("entered_by")
-    now = datetime.utcnow()
-
+    now = get_timezone_now()
     try:
         user = db.query(Users).filter(Users.id == user_id, ~Users.is_archived).first()
         if not user:
@@ -96,8 +96,7 @@ async def upload_profile_picture(user_id: int, file: UploadFile, db: Session) ->
 
 async def remove_profile_picture(user_id: int, db: Session) -> JSONResponse:
     entered_by = get_context("entered_by")
-    now = datetime.utcnow()
-
+    now = get_timezone_now()
     try:
         user = db.query(Users).filter(Users.id == user_id, ~Users.is_archived).first()
         if not user:
@@ -140,7 +139,8 @@ async def remove_profile_picture(user_id: int, db: Session) -> JSONResponse:
 
 
 async def change_password(schema: PasswordChangeSchema, user_id: int, db: Session) -> JSONResponse:
-
+    entered_by = get_context("entered_by")
+    now = get_timezone_now()
     try:
         if schema.user_id != user_id:
             logger.info("change password attempt failed - user id mismatch")
@@ -153,8 +153,7 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
                 status_code=status.HTTP_200_OK,
             )
 
-        user = Users.get(schema.user_id)
-    
+        user = db.query(Users).filter(Users.id == schema.user_id, ~Users.is_archived).first()
         if not user:
             logger.info(f"user not found for user")
             return JSONResponse(
@@ -179,7 +178,8 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
         
         user.login_password = hash_password(schema.new_password)
         user.require_password_change = False
-        user.save()
+        user.last_modified_at = get_timezone_now()
+        db.commit()
         logger.info(f"change password success for user: {user.email} (ID: {user.id})")
         return JSONResponse(
             content={
@@ -191,6 +191,7 @@ async def change_password(schema: PasswordChangeSchema, user_id: int, db: Sessio
         )
  
     except Exception as e:
+        db.rollback()
         logger.error(f"Error changing password for user {str(e)}")
         return JSONResponse(
             content={

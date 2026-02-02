@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
     
     # FastAPI
-    APP_ENV: str = 'staging'
+    APP_ENV: str = 'production'
     DEBUG: bool = True
     LOG_LEVEL: str = "info"
     

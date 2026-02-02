@@ -8,7 +8,8 @@ from src.billings.schema import BillingSchema, BillingWithDocumentsSchema, Addit
 from src.additional_documents.models import AdditionalDocuments
 from src.core.file_utils import save_multiple_files
 from src.core.logger import logger
-
+from src.core.timezone_utils import get_timezone_now
+from src.core.context import get_context
 
 async def get_billing_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
@@ -86,9 +87,10 @@ async def create_billing(
     db: Session,
 ) -> JSONResponse:
     try:
-        logger.info(f"Creating billing for files: {files}")
         from src.jobs.models import Jobs
         job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         if not job:
             logger.error(f"Job with job_no {job_no} not found")
             return JSONResponse(
@@ -108,8 +110,14 @@ async def create_billing(
             billing_notes=billing_notes,
             videographer_hours_present=videographer_hours_present,
             file_hours_length=file_hours_length,
+            entered_by=entered_by,
+            last_modified_by=entered_by,
+            entered_at=now,
+            last_modified_at=now,
         )
-        billing = Billings.save(billing)
+        db.add(billing)
+        db.commit()
+        db.refresh(billing)
         logger.info(f"Successfully created billing for job {job_no}")
         documents_created = 0
         if files:
@@ -120,8 +128,12 @@ async def create_billing(
                     billing_id=billing.id,
                     file_name=file_name,
                     file_path=file_path,
+                    entered_by=entered_by,
+                    last_modified_by=entered_by,
+                    entered_at=now,
+                    last_modified_at=now,
                 )
-                AdditionalDocuments.save(doc)
+                db.add(doc)
                 documents_created += 1
 
         billing_data = BillingSchema.model_validate(billing)
@@ -143,6 +155,7 @@ async def create_billing(
         )
 
     except Exception as e:
+        db.rollback()
         logger.error(f"Error creating billing for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
@@ -169,7 +182,8 @@ async def update_billing(
 ) -> JSONResponse:
 
     try:
-        logger.info(f"Updating billing for billing {billing_id}")
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         billing = db.query(Billings).filter(
             Billings.id == billing_id,
             Billings.is_archived == False
@@ -260,7 +274,9 @@ async def update_billing(
                                 logger.warning(f"Failed to delete file {doc.file_path}: {str(e)}")
                         
                         doc.is_archived = True
-                        doc.save()
+                        doc.last_modified_at = now
+                        doc.last_modified_by = entered_by
+                        db.add(doc)
                         documents_removed += 1
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Invalid document ID: {doc_id_str}, error: {str(e)}")
@@ -278,14 +294,22 @@ async def update_billing(
                     billing_id=billing.id,
                     file_name=file_name,
                     file_path=file_path,
+                    entered_by=entered_by,
+                    last_modified_by=entered_by,
+                    entered_at=now,
+                    last_modified_at=now,
                 )
-                AdditionalDocuments.save(doc)
+                db.add(doc)
                 documents_uploaded += 1
         
         if documents_uploaded > 0:
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
         
-        billing.save()
+        billing.last_modified_at = now
+        billing.last_modified_by = entered_by
+        db.add(billing)
+        db.commit()
+        db.refresh(billing)
         logger.info(f"Successfully updated billing {billing_id}")
         billing_data = BillingSchema.model_validate(billing)
         
@@ -307,6 +331,7 @@ async def update_billing(
         )
 
     except Exception as e:
+        db.rollback()
         logger.error(f"Error updating billing {billing_id}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
@@ -322,7 +347,8 @@ async def update_billing(
 async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
 
     try:
-        logger.info(f"Deleting billing for billing {billing_id}")
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         billing = db.query(Billings).filter(Billings.id == billing_id, Billings.is_archived == False).first()
         if not billing or billing.is_archived:
             logger.error(f"Billing with ID {billing_id} not found")
@@ -337,7 +363,11 @@ async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
             )
         
         billing.is_archived = True
-        billing.save()
+        billing.last_modified_at = now
+        billing.last_modified_by = entered_by
+        db.add(billing)
+        db.commit()
+        db.refresh(billing)
         logger.info(f"Billing deleted successfully for billing {billing_id}")
 
         return JSONResponse(

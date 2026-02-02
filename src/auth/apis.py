@@ -17,7 +17,6 @@ from src.auth.schema import PasswordResetSchema, RefreshTokenSchema
 from src.users.models import Users
 from fastapi import Depends
 from fastapi.responses import JSONResponse
-from src.core.timezone_utils import get_default_timezone, get_timezone_abbreviation
 
 
 async def login_user(data: LoginCredentialSchema):
@@ -60,8 +59,6 @@ async def login_user(data: LoginCredentialSchema):
             'full_name': user_obj.full_name or '',
             'email': user_obj.email or '',
             'login_name': user_obj.login_name or '',
-            'timezone': get_default_timezone(),
-            'timezone_abbr': get_timezone_abbreviation()
         }
         
         response = {
@@ -134,9 +131,7 @@ async def refresh_token(data: RefreshTokenSchema):
             'id': user.id,
             'full_name': user.full_name or '',
             'email': user.email or '',
-            'login_name': user.login_name or '',
-            'timezone': get_default_timezone(),
-            'timezone_abbr': get_timezone_abbreviation()
+            'login_name': user.login_name or ''
         }
         
         response = {

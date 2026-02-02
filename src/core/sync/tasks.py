@@ -35,7 +35,7 @@ def sync_external_data():
         test_limit = 3  # Limit to 2 records for testing
         
         stage1_service = ExternalToRb9SynchronizationService()
-        stage1_results = stage1_service.sync_all(
+        stage1_results = stage1_service.synchronize_all_tables(
             start_date=test_start_date,
             end_date=test_end_date,
             limit=test_limit

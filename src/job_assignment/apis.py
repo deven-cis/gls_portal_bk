@@ -15,11 +15,14 @@ from src.additional_documents.models import AdditionalDocuments
 from src.core.context import get_context
 from src.users.models import Users
 from src.jobs.models import JobStatusEnum
+from src.core.timezone_utils import get_timezone_now
 
 async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -> JSONResponse:
     try:
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         current_user_id = get_context('user_id')
-        current_user_no = get_context('entered_by')
+        current_user_no = entered_by
         
         assignee_user_id = payload.assignee_user_id
         job_no = payload.job_id

@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from src.cases.models import Cases
 from src.cases.schema import CaseEditSchema, CaseSchema, GetCaseSchema
 from src.core.logger import logger
+from src.core.timezone_utils import get_timezone_now
+from src.core.context import get_context
 
 
 async def list_cases(db: Session) -> JSONResponse:
@@ -61,6 +63,8 @@ async def get_case(case_id: int, db: Session) -> JSONResponse:
 async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSONResponse:
     
     try:
+        entered_by = get_context("entered_by")
+        now = get_timezone_now()
         case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
         if not case:
             logger.warning(f'Case {case_id} not found')
@@ -93,7 +97,11 @@ async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSO
                 value = value.strip()
             setattr(case, field, value)
         
-        case.save()
+        case.last_modified_at = now
+        case.last_modified_by = entered_by
+        db.add(case)
+        db.commit()
+        db.refresh(case)
         logger.info(f'Case {case_id} updated successfully')
 
         return JSONResponse(
@@ -108,6 +116,7 @@ async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSO
         
     except Exception as e:
         logger.error(f"Error updating case {case_id}: {str(e)}", exc_info=True)
+        db.rollback()
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,

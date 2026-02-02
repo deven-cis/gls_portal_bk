@@ -17,7 +17,7 @@ from src.witnesses.schema import (
     WitnessSaveAllPayloadSchema,
     WitnessSchema,
 )
-
+from src.core.timezone_utils import get_timezone_now
 
 def _normalize_time_string(value: Optional[str]) -> Optional[str]:
     if value is None:
@@ -167,8 +167,14 @@ async def create_witness_name(data: CreateWitnessFrontSchema, db: Session) -> JS
             witness_name=data.witness_name,
             read_on_text=read_context["read_on_text"],
             read_off_text=read_context["read_off_text"],
+            entered_by=get_context("entered_by"),
+            last_modified_by=get_context("entered_by"),
+            entered_at=get_timezone_now(),
+            last_modified_at=get_timezone_now(),
         )
-        witness.save()
+        db.add(witness)
+        db.commit()
+        db.refresh(witness)
 
         witness_data = WitnessCreateSchema.model_validate(witness).model_dump(mode="json")
         return JSONResponse(
@@ -198,8 +204,7 @@ async def update_witness_name(
     payload: WitnessNameUpdateSchema,
     db: Session,
 ) -> JSONResponse:
-    entered_by = get_context("entered_by") or 0
-    now = datetime.utcnow()
+    entered_by = get_context("entered_by")
 
     try:
         name = (payload.witness_name or "").strip()
@@ -231,8 +236,9 @@ async def update_witness_name(
             )
 
         witness.witness_name = name
-        witness.last_modified_at = now
+        witness.last_modified_at = get_timezone_now()
         witness.last_modified_by = entered_by
+        db.add(witness)
         db.commit()
         db.refresh(witness)
 
@@ -267,7 +273,6 @@ async def save_witness_and_videos(
     db: Session,
 ) -> JSONResponse:
     entered_by = get_context("entered_by") or 0
-    now = datetime.utcnow()
 
     try:
         raw = json.loads(payload)
@@ -326,8 +331,6 @@ async def save_witness_and_videos(
             )
         logger.info(f"Witness updated successfully for witness_id {data.witness_id}")
 
-        witness.last_modified_at = now
-        witness.last_modified_by = entered_by
 
         if data.witness_name is not None:
             new_name = str(data.witness_name).strip()
@@ -370,7 +373,7 @@ async def save_witness_and_videos(
             for ev in existing_videos:
                 if ev.id not in keep_ids:
                     ev.is_archived = True
-                    ev.last_modified_at = now
+                    ev.last_modified_at = get_timezone_now()
                     ev.last_modified_by = entered_by
 
         for item in data.videos:
@@ -382,7 +385,7 @@ async def save_witness_and_videos(
                 ).first()
                 if vid:
                     vid.is_archived = True
-                    vid.last_modified_at = now
+                    vid.last_modified_at = get_timezone_now()
                     vid.last_modified_by = entered_by
                 continue
 
@@ -395,7 +398,7 @@ async def save_witness_and_videos(
                 if not vid:
                     continue
 
-                vid.last_modified_at = now
+                vid.last_modified_at = get_timezone_now()
                 vid.last_modified_by = entered_by
                 if item.start_time is not None:
                     vid.start_time = _normalize_time_string(item.start_time)
@@ -430,14 +433,18 @@ async def save_witness_and_videos(
                 end_time=end_time_str,
                 file_name=file_name,
                 file_path=file_path,
-                entered_at=now,
+                entered_at=get_timezone_now(),
                 entered_by=entered_by,
-                last_modified_at=now,
+                last_modified_at=get_timezone_now(),
                 last_modified_by=entered_by,
             )
             db.add(new_vid)
 
+        witness.last_modified_at = get_timezone_now()
+        witness.last_modified_by = entered_by
+        db.add(witness)
         db.commit()
+        db.refresh(witness)
 
         witness_out: Witnesses = (
             db.query(Witnesses)
@@ -477,8 +484,7 @@ async def save_witness_and_videos(
 
 
 async def delete_witness_by_id(witness_id: int, db: Session) -> JSONResponse:
-    entered_by = get_context("entered_by") or 0
-    now = datetime.utcnow()
+    entered_by = get_context("entered_by")
 
     try:
         witness: Optional[Witnesses] = db.query(Witnesses).filter(
@@ -501,15 +507,18 @@ async def delete_witness_by_id(witness_id: int, db: Session) -> JSONResponse:
             WitnessVideos.wit_no == witness_id,
             ~WitnessVideos.is_archived,
         ).all()
+        
         for v in videos:
             v.is_archived = True
-            v.last_modified_at = now
+            v.last_modified_at = get_timezone_now()
             v.last_modified_by = entered_by
-
+            db.add(v)
+        
         witness.is_archived = True
-        witness.last_modified_at = now
+        witness.last_modified_at = get_timezone_now()
         witness.last_modified_by = entered_by
-
+        db.add(witness)
+        
         db.commit()
 
         return JSONResponse(

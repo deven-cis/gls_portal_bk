@@ -8,6 +8,7 @@ from src.core.config import config
 from src.core.logger import logger
 from src.core.context import set_context
 from src.core.database import get_db
+from src.core.timezone_utils import get_timezone_now
 security = HTTPBearer()
 
 
@@ -53,11 +54,11 @@ def create_tokens(data: dict, token_type: str = 'access') -> dict:
     else:
         expires_delta = timedelta(seconds=config.REFRESH_TOKEN_EXPIRATION_TIME)
     
-    expire = datetime.utcnow() + expires_delta
+    expire = get_timezone_now() + expires_delta
     to_encode.update({
         'exp': expire,
         'type': token_type,
-        'iat': datetime.utcnow()
+        'iat': get_timezone_now()
     })
     
     token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)

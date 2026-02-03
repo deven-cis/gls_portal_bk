@@ -2,7 +2,7 @@ from datetime import datetime, time
 from typing import Optional, List, Dict
 
 from pydantic import BaseModel
-from src.cases.schema import CaseSchema, CaseListSchema
+from src.cases.schema import CaseListSchema
 from src.jobs.models import CancelReasonEnum, JobStatusEnum
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema

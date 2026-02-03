@@ -78,7 +78,8 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
             )
             .values(
                 is_archived=True,
-                last_modified_by=current_user_id
+                last_modified_by=current_user_id,
+                last_modified_at=now
             )
         )
         
@@ -89,7 +90,9 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
             case_no=job.case_no,
             reason=payload.reason,
             entered_by=current_user_id,
-            last_modified_by=current_user_id
+            last_modified_by=current_user_id,
+            last_modified_at=now,
+            entered_at=now
         )
         db.add(assignment)
         
@@ -100,13 +103,14 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
                 Jobs.is_archived == False
             )
             .values(
-                entered_by=assignee_user_no,
-                last_modified_by=assignee_user_no,
                 computed_status=JobStatusEnum.SESSION_NOT_STARTED.value,
                 actual_session_start_time=None,
                 actual_session_end_time=None,
                 session_duration=None,
-                session_completed=False
+                session_completed=False,
+                entered_by=assignee_user_no,
+                last_modified_by=assignee_user_no,
+                last_modified_at=now
             )
         )
         
@@ -128,11 +132,13 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
                 )
                 .values(
                     entered_by=assignee_user_no,
-                    last_modified_by=assignee_user_no
+                    last_modified_by=assignee_user_no,
+                    last_modified_at=now
                 )
             )
         
         db.commit()
+        db.refresh(assignment)
         
         logger.info(
             f"Job {job_no} successfully reassigned "

@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 import os
 from pathlib import Path
-
 from src.jobs.models import Jobs
 from src.core.logger import logger
 from src.cases.models import Cases
@@ -31,7 +30,7 @@ from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
-
+from src.core.timezone_utils import get_timezone_now
 
 async def get_cancelled_job_details(
     job_no: int,
@@ -85,8 +84,7 @@ async def get_cancelled_job_details(
             },
             status_code=status.HTTP_200_OK
         )
-    except HTTPException:
-        raise
+
     except Exception as e:
         logger.error(f"Error getting cancelled job details for job_no {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
@@ -204,8 +202,6 @@ async def get_completed_job_details(
             status_code=status.HTTP_200_OK
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error getting completed job details for job_no {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
@@ -226,12 +222,11 @@ async def get_mark_as_done_status(
     db: Session
 ) -> JSONResponse:
     try:
-        logger.info(f"Getting mark as done status for job_no {job_no} and case_no {case_no}")
-        
+        user_entered_by = get_context('entered_by')
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
-            .filter(Jobs.job_no == job_no, Jobs.is_archived == False)
+            .filter(Jobs.job_no == job_no, Jobs.entered_by == user_entered_by, Jobs.is_archived == False)
             .options(joinedload(Jobs.case))
             .first()
         )
@@ -360,11 +355,6 @@ def merge_videos_ffmpeg(video_paths: List[str], job_no: int) -> Path:
         if concat_file.exists():
             concat_file.unlink()
 
-async def list_jobs(
-    current_user: dict,
-) -> JSONResponse:
-    return Jobs.fetch_records({"entered_by": current_user.get("id")})
-
 
 async def list_jobs_by_case(
     current_user: dict,
@@ -424,7 +414,7 @@ async def list_pending_jobs(
                 job_status = status_by_job.get(job_data["job_no"], {"witness_videos_status": {}})
                 job_data["witness_videos_status"] = job_status.get("witness_videos_status", {})
 
-            logger.info(f"Found {len(jobs_data)} pending jobs (all) for user {user_entered_by}")
+            logger.info(f"Found {len(jobs_data)} pending jobs for user {user_entered_by}")
             
             return JSONResponse(
                 content={
@@ -517,7 +507,7 @@ async def list_upcoming_jobs(
             jobs = query.order_by(Jobs.job_date.asc(), Jobs.start_time.asc()).all()
             jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
             
-            logger.info(f"Found {len(jobs_data)} upcoming jobs (all) for user {user_entered_by}")
+            logger.info(f"Found {len(jobs_data)} upcoming jobs for user {user_entered_by}")
             
             return JSONResponse(
                 content={
@@ -677,7 +667,7 @@ async def start_session(
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
-        
+        now = get_timezone_now()
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -702,11 +692,12 @@ async def start_session(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        job.actual_session_start_time = datetime.now()
+        job.actual_session_start_time = now
         job.computed_status = JobStatusEnum.SESSION_IN_PROGRESS.value
-        
+        job.last_modified_at = now
+        job.last_modified_by = user_entered_by
+        db.add(job)
         db.commit()
-        db.refresh(job)
         
         logger.info(f"Session started for job_no {job_no} at {job.actual_session_start_time}")
         
@@ -724,8 +715,6 @@ async def start_session(
             status_code=status.HTTP_200_OK
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error starting session for job_no {job_no}: {str(e)}", exc_info=True)
@@ -747,7 +736,7 @@ async def end_session(
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
-        
+        now = get_timezone_now()
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -774,7 +763,7 @@ async def end_session(
                 status_code=status.HTTP_404_NOT_FOUND
             )
         
-        job.actual_session_end_time = datetime.utcnow()
+        job.actual_session_end_time = now
         duration = job.actual_session_end_time - job.actual_session_start_time
         total_seconds = int(duration.total_seconds())
         hours = total_seconds // 3600
@@ -783,9 +772,11 @@ async def end_session(
         job.session_duration = f"{hours}:{minutes:02d}:{seconds:02d}"
         job.session_completed = True
         job.computed_status = JobStatusEnum.COMPLETED.value
+        job.last_modified_at = now
+        job.last_modified_by = user_entered_by
         
+        db.add(job)
         db.commit()
-        db.refresh(job)
         
         logger.info(f"Session ended for job_no {job_no}. Duration: {job.session_duration}")
         
@@ -805,8 +796,6 @@ async def end_session(
             status_code=status.HTTP_200_OK
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error ending session for job_no {job_no}: {str(e)}", exc_info=True)
@@ -829,7 +818,7 @@ async def cancel_job(
 ) -> JSONResponse:
     try:
         user_entered_by = get_context('entered_by')
-        
+        now = get_timezone_now()
         job = (
             db.query(Jobs)
             .join(Cases, Jobs.case_no == Cases.case_no)
@@ -859,11 +848,13 @@ async def cancel_job(
         job.cancel_reason = payload.cancel_reason if payload.cancel_reason else None
         job.cancel_details = payload.cancel_details
         job.cancel_by = user_entered_by
-        job.cancel_date = datetime.now()
+        job.cancel_date = now
         job.computed_status = JobStatusEnum.CANCELLED.value
+        job.last_modified_at = now
+        job.last_modified_by = user_entered_by
         
+        db.add(job)
         db.commit()
-        db.refresh(job)
         
         logger.info(f"Job {job_no} cancelled successfully with reason: {job.cancel_reason}")
         
@@ -876,8 +867,6 @@ async def cancel_job(
             },
             status_code=status.HTTP_200_OK
         )
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error canceling job {job_no}: {str(e)}", exc_info=True)
@@ -987,7 +976,6 @@ async def cancelled_and_completed_jobs(
         )
 
 
-
 async def mark_job_as_done(
     job_no: int,
     type: str,
@@ -996,6 +984,8 @@ async def mark_job_as_done(
     db: Session
 ) -> JSONResponse:
     try:
+        now = get_timezone_now()
+        user_entered_by = get_context('entered_by')
         valid_types = ['case', 'witnesses', 'attorneys', 'billings', 'equipment_time']
         if type not in valid_types:
             logger.error(f"Invalid type: {type}")
@@ -1010,10 +1000,6 @@ async def mark_job_as_done(
             )
         
         is_done = body.get("is_done", False)
-        user_entered_by = get_context('entered_by')
-        
-        logger.info(f"Marking job {job_no} as done: {type} = {is_done}")
-        
         job = (
             db.query(Jobs)
             .filter(
@@ -1037,11 +1023,12 @@ async def mark_job_as_done(
             )
         
         setattr(job, f"mark_is_done_{type}", is_done)
+        job.last_modified_at = now
+        job.last_modified_by = user_entered_by
+        db.add(job)
         db.commit()
-        db.refresh(job)
         
         logger.info(f'Job {job_no} marked as done: {type} = {is_done}')
-        
         message = f"Job {job_no} {type} marked as {'done' if is_done else 'not done'} successfully"
         
         return JSONResponse(
@@ -1057,9 +1044,7 @@ async def mark_job_as_done(
             },
             status_code=status.HTTP_200_OK
         )
-        
-    except HTTPException:
-        raise
+
     except Exception as e:
         db.rollback()
         logger.error(f"Error marking job {job_no} as done: {type}: {str(e)}", exc_info=True)
@@ -1074,8 +1059,6 @@ async def mark_job_as_done(
         )
 
 
-
-
 def _get_calendar_events_query(
     db: Session,
     user_entered_by: int,
@@ -1086,12 +1069,12 @@ def _get_calendar_events_query(
         db.query(Jobs)
         .join(Cases, Jobs.case_no == Cases.case_no)
         .options(joinedload(Jobs.case))
-        .filter(Jobs.is_archived == False)
-        .filter(Jobs.entered_by == user_entered_by)
-        .filter(Cases.is_archived == False)
         .filter(
-            func.date(Jobs.job_date) >= start_date,
-            func.date(Jobs.job_date) <= end_date
+            Jobs.is_archived == False,
+            Jobs.entered_by == user_entered_by,
+            Cases.is_archived == False,
+            Jobs.job_date >= start_date,
+            Jobs.job_date <= end_date
         )
         .order_by(Jobs.job_date, Jobs.start_time)
         .all()

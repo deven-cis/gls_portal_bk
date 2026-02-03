@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from jose import jwt
 from fastapi import HTTPException, status, Depends
 from sqlalchemy.orm import Session
@@ -54,11 +55,12 @@ def create_tokens(data: dict, token_type: str = 'access') -> dict:
     else:
         expires_delta = timedelta(seconds=config.REFRESH_TOKEN_EXPIRATION_TIME)
     
-    expire = get_timezone_now() + expires_delta
+    utc_now = datetime.now(ZoneInfo("UTC"))
+    expire = utc_now + expires_delta
     to_encode.update({
         'exp': expire,
         'type': token_type,
-        'iat': get_timezone_now()
+        'iat': utc_now
     })
     
     token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
@@ -158,7 +160,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         decoded_data.pop('type', None)
         decoded_data.pop('iat', None)
         
-        logger.info(f"Current user authenticated: {user.id}")
         return decoded_data
         
     except HTTPException:

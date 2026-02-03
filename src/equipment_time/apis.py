@@ -132,11 +132,12 @@ async def create_equipment_time(
             pip_used=pip_used,
             exhibit_tech=exhibit_tech,
             parking_cost=parking_cost_decimal,
-            time_after=time_after
+            time_after=time_after,
+            entered_by=entered_by,
+            entered_at=now,
+            last_modified_by=entered_by,
+            last_modified_at=now
         )
-        
-        equipment_time.last_modified_at = now
-        equipment_time.last_modified_by = entered_by
         db.add(equipment_time)
         db.commit()
         db.refresh(equipment_time)

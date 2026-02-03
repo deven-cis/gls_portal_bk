@@ -4,6 +4,7 @@ Main File of FastAPI application
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.background import P
 
 from src.auth import auth_router
 from src.core.config import config
@@ -37,54 +38,54 @@ app.add_middleware(
 
 app.include_router(
     auth_router,
-    
+    prefix="/api",
     tags=["authentication"]
 )
 
 app.include_router(
     users_router,
-    
+    prefix="/api",
     tags=["users"]
 )
 
 app.include_router(
     cases_router,
-    
+    prefix="/api",
     tags=['case']
 )
 
 app.include_router(
     jobs_apis,
-    
+    prefix="/api",
     tags=['jobs']
 )
 
 app.include_router(
     witnesses_api,
-    
+    prefix="/api",
     tags=['witnesses']
 
 )
 app.include_router(
     attorneys_router,
-    
+    prefix="/api",
     tags=['attorneys']
 )
 
 app.include_router(
     billings_router,
-    
+    prefix="/api",
     tags=['billings']
 )
 
 app.include_router(
     equipment_time_router,
-    
+    prefix="/api",
     tags=['equipment-time']
 )
 
 app.include_router(
     job_assignment_apis,
-    
+    prefix="/api",
     tags=['job-assignment']
 )

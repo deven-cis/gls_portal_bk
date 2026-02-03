@@ -101,7 +101,6 @@ async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSO
         case.last_modified_by = entered_by
         db.add(case)
         db.commit()
-        db.refresh(case)
         logger.info(f'Case {case_id} updated successfully')
 
         return JSONResponse(

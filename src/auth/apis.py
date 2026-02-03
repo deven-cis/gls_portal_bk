@@ -59,6 +59,9 @@ async def login_user(data: LoginCredentialSchema):
             'full_name': user_obj.full_name or '',
             'email': user_obj.email or '',
             'login_name': user_obj.login_name or '',
+            'require_password_change': bool(getattr(user_obj, 'require_password_change', False)),
+            'entered_by': getattr(user_obj, 'entered_by', None),
+            'last_modified_by': getattr(user_obj, 'last_modified_by', None)
         }
         
         response = {
@@ -131,7 +134,10 @@ async def refresh_token(data: RefreshTokenSchema):
             'id': user.id,
             'full_name': user.full_name or '',
             'email': user.email or '',
-            'login_name': user.login_name or ''
+            'login_name': user.login_name or '',
+            'require_password_change': bool(getattr(user, 'require_password_change', False)),
+            'entered_by': getattr(user, 'entered_by', None),
+            'last_modified_by': getattr(user, 'last_modified_by', None)
         }
         
         response = {

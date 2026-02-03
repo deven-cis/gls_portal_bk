@@ -10,7 +10,6 @@ from src.jobs.apis import (
     get_cancelled_job_details,
     get_completed_job_details,
     get_mark_as_done_status,
-    list_jobs,
     list_jobs_by_case,
     list_pending_jobs,
     list_upcoming_jobs,
@@ -54,13 +53,6 @@ async def get_mark_as_done_status_route(
     db: Session = Depends(get_db)
 ) -> JSONResponse:
     return await get_mark_as_done_status(job_no, case_no, current_user, db)
-
-
-@jobs_apis.get('/list')
-async def list_jobs_route(
-    current_user: dict = Depends(get_current_user),
-):
-    return await list_jobs(current_user)
 
 
 @jobs_apis.get('/list_by_case')

@@ -99,7 +99,7 @@ def build_calendar_event_title(job: Jobs) -> str:
     if job.job_loc_name:
         location = f" - {job.job_loc_name}"
     
-    return f"Deposition: {case_name}{location}"
+    return f"{job.case.case_type if job.case and job.case.case_type else ''}: {case_name}{location}"
 
 
 def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
@@ -122,7 +122,7 @@ def job_to_calendar_event(job: Jobs, db: Session) -> CalendarEventSchema:
         status=status,
         computed_status=job.computed_status,
         deadline=deadline,
-        type="deposition",
+        type= job.case.case_type if job.case and job.case.case_type else '',
         witness_videos_status=witness_videos_status.get("witness_videos_status",{})
     )
 

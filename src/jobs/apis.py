@@ -708,7 +708,7 @@ async def start_session(
                 "success": True,
                 "result": {
                     "job_no": job.job_no,
-                    "start_time": job.actual_session_start_time.isoformat(),
+                    "start_time": job.actual_session_start_time.isoformat() if job.actual_session_start_time else None,
                     "computed_status": job.computed_status
                 }
             },
@@ -787,8 +787,8 @@ async def end_session(
                 "success": True,
                 "result": {
                     "job_no": job.job_no,
-                    "start_time": job.actual_session_start_time,
-                    "end_time": job.actual_session_end_time,
+                    "start_time": job.actual_session_start_time.isoformat() if job.actual_session_start_time else None,
+                    "end_time": job.actual_session_end_time.isoformat() if job.actual_session_end_time else None,
                     "duration": job.session_duration,
                     "computed_status": job.computed_status
                 }

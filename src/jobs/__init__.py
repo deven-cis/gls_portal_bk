@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, Body
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from datetime import date
-from typing import Optional
+from typing import Optional, Union
 
 from src.auth.utils import get_current_user
 from src.core.database import get_db
@@ -123,14 +123,21 @@ async def cancel_job_route(
 @jobs_apis.get('/cancelled_and_completed_jobs/{type}')
 async def cancelled_and_completed_jobs_route(
     type: str,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
+    start_date: Optional[date] = Query(None, description="Start date filter"),
+    end_date: Optional[date] = Query(None, description="End date filter"),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    page_size: int = Query(5, ge=1, le=100, description="Number of items per page"),
+    job_no: Optional[Union[int, str]] = Query(None),
+    witness_name: Optional[str] = Query(None),
+    case_name: Optional[str] = Query(None),
+    case_number: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> JSONResponse:
-    return await cancelled_and_completed_jobs(type, start_date, end_date, page, page_size, current_user, db)
+    return await cancelled_and_completed_jobs(
+        type, start_date, end_date, page, page_size, current_user, db,
+        job_no=job_no, witness_name=witness_name, case_name=case_name, case_number=case_number
+    )
 
 
 @jobs_apis.patch("/{job_no}/mark_as_done/{type}", status_code=200)

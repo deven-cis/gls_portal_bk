@@ -2,7 +2,7 @@ from typing import List, Optional, Union
 from datetime import datetime, timedelta, date
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse, FileResponse
-from sqlalchemy import func
+from sqlalchemy import func, String
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
 import subprocess
 import tempfile
@@ -183,10 +183,12 @@ async def get_completed_job_details(
         
         job_details = {
             "job_no": job.job_no,
+            "case_number": job.case.case_number if job.case else None,
+            "case_short_name": job.case.case_short_name if job.case and job.case.case_short_name else None,
             "witnesses": witnesses_data,
             "attorneys": attorneys_data
         }
-        
+        logger.info(f"Job details: {job_details}")
         logger.info(
             f"Found {len(witnesses_data)} witness(es) with videos and {len(attorneys_data)} attorney(s) "
             f"for job_no {job_no}"
@@ -403,7 +405,6 @@ async def list_pending_jobs(
             )
         )
         
-        # If pagination is not provided, return all jobs
         if page is None or page_size is None:
             jobs = query.order_by(Jobs.job_date.asc(), Jobs.start_time.asc()).all()
             jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
@@ -426,7 +427,6 @@ async def list_pending_jobs(
                 status_code=status.HTTP_200_OK
             )
         
-        # Pagination logic
         total = query.count()
         jobs = (
             query
@@ -502,7 +502,6 @@ async def list_upcoming_jobs(
             )
         )
         
-        # If pagination is not provided, return all jobs
         if page is None or page_size is None:
             jobs = query.order_by(Jobs.job_date.asc(), Jobs.start_time.asc()).all()
             jobs_data = [JobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
@@ -519,7 +518,6 @@ async def list_upcoming_jobs(
                 status_code=status.HTTP_200_OK
             )
         
-        # Pagination logic
         total = query.count()
         jobs = (
             query
@@ -888,7 +886,11 @@ async def cancelled_and_completed_jobs(
     page: int,
     page_size: int,
     current_user: dict,
-    db: Session
+    db: Session,
+    job_no: Optional[Union[int, str]] = None,
+    witness_name: Optional[str] = None,
+    case_name: Optional[str] = None,
+    case_number: Optional[str] = None
 ) -> JSONResponse:
     try:
         if type not in ['Cancelled', 'Completed']:
@@ -907,7 +909,8 @@ async def cancelled_and_completed_jobs(
         user_entered_by = get_context('entered_by')
         logger.info(
             f"Listing {type} jobs for user {user_entered_by} "
-            f"(start_date={start_date}, end_date={end_date}, page={page}, page_size={page_size})"
+            f"(start_date={start_date}, end_date={end_date}, page={page}, page_size={page_size}, "
+            f"job_no={job_no}, witness_name={witness_name}, case_name={case_name}, case_number={case_number})"
         )
         
         query = (
@@ -925,6 +928,29 @@ async def cancelled_and_completed_jobs(
         if end_date:
             query = query.filter(func.date(Jobs.job_date) <= end_date)
         
+        if job_no is not None:
+            job_no_str = str(job_no).strip()
+            if job_no_str:
+                query = query.filter(Jobs.job_no.cast(String).ilike(f'%{job_no_str}%'))
+        
+        if case_name:
+            case_name_str = str(case_name).strip()
+            if case_name_str:
+                query = query.filter(Cases.case_short_name.ilike(f'%{case_name_str}%'))
+        
+        if case_number is not None:
+            case_number_str = str(case_number).strip()
+            if case_number_str:
+                query = query.filter(Cases.case_number.cast(String).ilike(f'%{case_number_str}%'))
+        
+        if witness_name:
+            witness_name_str = str(witness_name).strip()
+            if witness_name_str:
+                query = query.join(Witnesses, Jobs.job_no == Witnesses.job_no).filter(
+                    Witnesses.witness_name.ilike(f'%{witness_name_str}%')
+                )
+                query = query.distinct()
+        
         if type == 'Cancelled':
             query = query.filter(Jobs.computed_status == JobStatusEnum.CANCELLED.value)
         else:
@@ -933,7 +959,7 @@ async def cancelled_and_completed_jobs(
                 Jobs.session_completed == True
             )
         
-        total = query.count()
+        total = query.with_entities(func.count(Jobs.job_no)).scalar()
         jobs = (
             query
             .order_by(Jobs.job_date.desc(), Jobs.job_no.desc())
@@ -945,7 +971,7 @@ async def cancelled_and_completed_jobs(
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         jobs_data = [CancelledAndCompletedJobSchema.model_validate(job).model_dump(mode='json') for job in jobs]
         
-        logger.info(f"{type} jobs listed successfully")
+        logger.info(f"{type} jobs listed successfully: {len(jobs_data)} jobs found")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -962,6 +988,17 @@ async def cancelled_and_completed_jobs(
                 }
             },
             status_code=status.HTTP_200_OK
+        )
+    except ValueError as e:
+        logger.error(f"Invalid parameter value: {str(e)}")
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_400_BAD_REQUEST,
+                "message": f"Invalid parameter: {str(e)}",
+                "success": False,
+                "result": []
+            },
+            status_code=status.HTTP_400_BAD_REQUEST
         )
     except Exception as e:
         logger.error(f"Error listing {type} jobs: {str(e)}", exc_info=True)

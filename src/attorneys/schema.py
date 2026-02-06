@@ -12,6 +12,8 @@ class AttorneySchema(BaseModel):
     order_details: str
     file_name: Optional[str] = None
     file_name_path: Optional[str] = None
+    camera_captured_file_name: Optional[str] = None
+    camera_captured_file_path: Optional[str] = None
     entered_at: Optional[datetime] = None
 
     model_config = ConfigDict(

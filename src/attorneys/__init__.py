@@ -26,6 +26,8 @@ async def create_attorney_endpoint(
     notes: str = Form(...),
     order_details: str = Form(...),
     document: Optional[UploadFile] = File(None),
+    camera_captured_file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ) -> JSONResponse:
     return await create_attorney(
@@ -34,7 +36,9 @@ async def create_attorney_endpoint(
         firm_name=firm_name,
         notes=notes,
         order_details=order_details,
-        document=document
+        document=document,
+        camera_captured_file=camera_captured_file,
+        db=db
     )
 
 
@@ -47,7 +51,9 @@ async def update_attorney_endpoint(
     notes: Optional[str] = Form(None),
     order_details: Optional[str] = Form(None),
     document: Optional[UploadFile] = File(None),
+    camera_captured_file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     return await update_attorney(
         attorney_id=attorney_id,
@@ -56,7 +62,9 @@ async def update_attorney_endpoint(
         firm_name=firm_name,
         notes=notes,
         order_details=order_details,
-        document=document
+        document=document,
+        camera_captured_file=camera_captured_file,
+        db=db
     )
 
 
@@ -64,5 +72,6 @@ async def update_attorney_endpoint(
 async def delete_attorney_endpoint(
     attorney_id: int,
     current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
-    return await delete_attorney(attorney_id)
+    return await delete_attorney(attorney_id, db)

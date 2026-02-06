@@ -10,6 +10,8 @@ class BillingSchema(BaseModel):
     billing_notes: Optional[str] = None
     videographer_hours_present: Optional[str] = None
     file_hours_length: Optional[str] = None
+    camera_captured_file_name: Optional[str] = None
+    camera_captured_file_path: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -34,6 +36,8 @@ class BillingWithDocumentsSchema(BaseModel):
     billing_notes: Optional[str] = None
     videographer_hours_present: Optional[str] = None
     file_hours_length: Optional[str] = None
+    camera_captured_file_name: Optional[str] = None
+    camera_captured_file_path: Optional[str] = None
     documents: List[AdditionalDocumentResponseSchema] = []
 
     class Config:

@@ -27,6 +27,7 @@ async def create_billing_endpoint(
     videographer_hours_present: Optional[str] = Form(None),
     file_hours_length: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),
+    camera_captured_file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -38,6 +39,7 @@ async def create_billing_endpoint(
         videographer_hours_present=videographer_hours_present,
         file_hours_length=file_hours_length,
         files=files,
+        camera_captured_file=camera_captured_file,
         db=db
     )
 
@@ -53,6 +55,7 @@ async def update_billing_endpoint(
     videographer_hours_present: Optional[str] = Form(None),
     file_hours_length: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),
+    camera_captured_file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -66,6 +69,7 @@ async def update_billing_endpoint(
         videographer_hours_present=videographer_hours_present,
         file_hours_length=file_hours_length,
         files=files,
+        camera_captured_file=camera_captured_file,
         db=db
     )
 

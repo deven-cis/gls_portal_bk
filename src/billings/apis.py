@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from src.billings.models import Billings
 from src.billings.schema import BillingSchema, BillingWithDocumentsSchema, AdditionalDocumentResponseSchema
 from src.additional_documents.models import AdditionalDocuments
-from src.core.file_utils import save_multiple_files
+from src.core.file_utils import save_multiple_files, save_image_file
 from src.core.logger import logger
 from src.core.timezone_utils import get_timezone_now
 from src.core.context import get_context
@@ -48,6 +48,8 @@ async def get_billing_by_job(job_no: int, db: Session) -> JSONResponse:
             billing_notes=billing.billing_notes,
             videographer_hours_present=billing.videographer_hours_present,
             file_hours_length=billing.file_hours_length,
+            camera_captured_file_name=billing.camera_captured_file_name,
+            camera_captured_file_path=billing.camera_captured_file_path,
             documents=documents_data
         )
         
@@ -85,6 +87,7 @@ async def create_billing(
     file_hours_length: Optional[str],
     files: Optional[List[UploadFile]],
     db: Session,
+    camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
         from src.jobs.models import Jobs
@@ -103,6 +106,12 @@ async def create_billing(
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        camera_captured_file_name = None
+        camera_captured_file_path = None
+        
+        if camera_captured_file and camera_captured_file.filename:
+            camera_captured_file_name, camera_captured_file_path = await save_image_file(camera_captured_file, "billings")
+        
         billing = Billings(
             job_no=job_no,
             cancel_en_route=cancel_en_route,
@@ -110,6 +119,8 @@ async def create_billing(
             billing_notes=billing_notes,
             videographer_hours_present=videographer_hours_present,
             file_hours_length=file_hours_length,
+            camera_captured_file_name=camera_captured_file_name,
+            camera_captured_file_path=camera_captured_file_path,
             entered_by=entered_by,
             last_modified_by=entered_by,
             entered_at=now,
@@ -179,6 +190,7 @@ async def update_billing(
     file_hours_length: Optional[str],
     files: Optional[List[UploadFile]],
     db: Session,
+    camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
 
     try:
@@ -251,6 +263,40 @@ async def update_billing(
         
         form_data = await request.form()
         remove_documents = form_data.getlist("remove_documents") if "remove_documents" in form_data else []
+        
+        # Check if camera_captured_file field was sent (even if empty)
+        camera_field_sent = 'camera_captured_file' in form_data
+        
+        if camera_field_sent:
+            if camera_captured_file and camera_captured_file.filename:
+                # Delete old camera file if exists
+                if billing.camera_captured_file_path:
+                    try:
+                        old_camera_file_path = Path(billing.camera_captured_file_path)
+                        if old_camera_file_path.exists():
+                            old_camera_file_path.unlink()
+                            logger.info(f"Deleted old camera file: {billing.camera_captured_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old camera file {billing.camera_captured_file_path}: {str(e)}")
+                
+                camera_captured_file_name, camera_captured_file_path = await save_image_file(camera_captured_file, "billings")
+                billing.camera_captured_file_name = camera_captured_file_name
+                billing.camera_captured_file_path = camera_captured_file_path
+                fields_updated.append("camera_captured_file")
+            else:
+                # Remove camera file if field sent but empty
+                if billing.camera_captured_file_path:
+                    try:
+                        camera_file_path = Path(billing.camera_captured_file_path)
+                        if camera_file_path.exists():
+                            camera_file_path.unlink()
+                            logger.info(f"Deleted camera file: {billing.camera_captured_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete camera file {billing.camera_captured_file_path}: {str(e)}")
+                
+                billing.camera_captured_file_name = None
+                billing.camera_captured_file_path = None
+                fields_updated.append("camera_captured_file")
         
         documents_removed = 0
         if remove_documents:

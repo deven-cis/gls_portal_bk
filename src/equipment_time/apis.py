@@ -12,7 +12,7 @@ from src.equipment_time.schema import (
     AdditionalDocumentResponseSchema,
 )
 from src.additional_documents.models import AdditionalDocuments
-from src.core.file_utils import save_multiple_files
+from src.core.file_utils import save_multiple_files, save_image_file
 from src.core.logger import logger
 from src.core.context import get_context
 from src.core.timezone_utils import get_timezone_now
@@ -67,6 +67,8 @@ async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
             exhibit_tech=equipment_time.exhibit_tech,
             parking_cost=parking_cost_str,
             time_after=time_after_str,
+            camera_captured_file_name=equipment_time.camera_captured_file_name,
+            camera_captured_file_path=equipment_time.camera_captured_file_path,
             documents=documents_data
         )
         
@@ -106,6 +108,7 @@ async def create_equipment_time(
     time_after: Optional[str],
     files: Optional[List[UploadFile]],
     db: Session,
+    camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
         entered_by = get_context("entered_by")
@@ -126,6 +129,13 @@ async def create_equipment_time(
         
         parking_cost_decimal = Decimal(parking_cost) if parking_cost else Decimal('0.00')
         
+        camera_captured_file_name = None
+        camera_captured_file_path = None
+        if camera_captured_file and camera_captured_file.filename:
+            camera_captured_file_name, camera_captured_file_path = await save_image_file(
+                camera_captured_file, "equipment_time"
+            )
+        
         equipment_time = EquipmentTime(
             job_no=job_no,
             laptop_used=laptop_used,
@@ -133,6 +143,8 @@ async def create_equipment_time(
             exhibit_tech=exhibit_tech,
             parking_cost=parking_cost_decimal,
             time_after=time_after,
+            camera_captured_file_name=camera_captured_file_name,
+            camera_captured_file_path=camera_captured_file_path,
             entered_by=entered_by,
             entered_at=now,
             last_modified_by=entered_by,
@@ -207,6 +219,8 @@ async def create_equipment_time(
             exhibit_tech=equipment_time.exhibit_tech,
             parking_cost=parking_cost_str,
             time_after=time_after_str,
+            camera_captured_file_name=equipment_time.camera_captured_file_name,
+            camera_captured_file_path=equipment_time.camera_captured_file_path,
             documents=documents_data
         )
         
@@ -251,6 +265,7 @@ async def update_equipment_time(
     time_after: Optional[str],
     files: Optional[List[UploadFile]],
     db: Session,
+    camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
         entered_by = get_context("entered_by")
@@ -302,6 +317,7 @@ async def update_equipment_time(
         
         form_data = await request.form()
         remove_documents = form_data.getlist("remove_documents") if "remove_documents" in form_data else []
+        camera_field_sent = "camera_captured_file" in form_data
         
         documents_removed = 0
         if remove_documents:
@@ -357,6 +373,38 @@ async def update_equipment_time(
         
         if documents_uploaded > 0:
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
+
+        # Handle camera-captured image
+        if camera_field_sent:
+            if camera_captured_file and camera_captured_file.filename:
+                # Delete old camera file if exists
+                if equipment_time.camera_captured_file_path:
+                    try:
+                        old_camera_file_path = Path(equipment_time.camera_captured_file_path)
+                        if old_camera_file_path.exists():
+                            old_camera_file_path.unlink()
+                            logger.info(f"Deleted old camera file: {equipment_time.camera_captured_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old camera file {equipment_time.camera_captured_file_path}: {str(e)}")
+                camera_captured_file_name, camera_captured_file_path = await save_image_file(
+                    camera_captured_file, "equipment_time"
+                )
+                equipment_time.camera_captured_file_name = camera_captured_file_name
+                equipment_time.camera_captured_file_path = camera_captured_file_path
+                fields_updated.append("camera_captured_file")
+            else:
+                # Remove camera file if field sent but empty
+                if equipment_time.camera_captured_file_path:
+                    try:
+                        camera_file_path = Path(equipment_time.camera_captured_file_path)
+                        if camera_file_path.exists():
+                            camera_file_path.unlink()
+                            logger.info(f"Deleted camera file: {equipment_time.camera_captured_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete camera file {equipment_time.camera_captured_file_path}: {str(e)}")
+                equipment_time.camera_captured_file_name = None
+                equipment_time.camera_captured_file_path = None
+                fields_updated.append("camera_captured_file")
         
         equipment_time.last_modified_at = now
         equipment_time.last_modified_by = entered_by

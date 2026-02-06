@@ -13,6 +13,8 @@ class Attorneys(Base):
     order_details = Column(Text, nullable=True)
     file_name = Column(Text, nullable=True)
     file_name_path = Column(Text, nullable=True)
-
+    camera_captured_file_name = Column(Text, nullable=True)
+    camera_captured_file_path = Column(Text, nullable=True)
+    
     # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="attorneys")

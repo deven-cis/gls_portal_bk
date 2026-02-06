@@ -12,6 +12,8 @@ class EquipmentTimeSchema(BaseModel):
     exhibit_tech: Optional[bool] = False
     parking_cost: Optional[str] = "0.00" 
     time_after: Optional[str] = None
+    camera_captured_file_name: Optional[str] = None
+    camera_captured_file_path: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -36,6 +38,8 @@ class EquipmentTimeWithDocumentsSchema(BaseModel):
     exhibit_tech: Optional[bool] = False
     parking_cost: Optional[str] = "0.00"
     time_after: Optional[str] = None
+    camera_captured_file_name: Optional[str] = None
+    camera_captured_file_path: Optional[str] = None
     documents: List[AdditionalDocumentResponseSchema] = []
 
     class Config:

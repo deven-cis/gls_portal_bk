@@ -28,6 +28,7 @@ async def create_equipment_time_endpoint(
     parking_cost: Optional[str] = Form(None),
     time_after: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),
+    camera_captured_file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -40,6 +41,7 @@ async def create_equipment_time_endpoint(
         parking_cost=parking_cost,
         time_after=time_after,
         files=files,
+        camera_captured_file=camera_captured_file,
         db=db
     )
 
@@ -54,6 +56,7 @@ async def update_equipment_time_endpoint(
     parking_cost: Optional[str] = Form(None),
     time_after: Optional[str] = Form(None),
     files: List[UploadFile] = File(None),
+    camera_captured_file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
@@ -67,7 +70,8 @@ async def update_equipment_time_endpoint(
         parking_cost=parking_cost,
         time_after=time_after,
         files=files,
-        db=db
+        db=db,
+        camera_captured_file=camera_captured_file
     )
 
 

@@ -1,5 +1,5 @@
 from decimal import Decimal
-from sqlalchemy import Column, Time, Integer, Boolean, Numeric, ForeignKey
+from sqlalchemy import Column, Time, Integer, Boolean, Numeric, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from src.core.models import Base
 
@@ -13,6 +13,8 @@ class EquipmentTime(Base):
     exhibit_tech = Column(Boolean, default=False)
     parking_cost = Column[Decimal](Numeric(10, 2), default=Decimal('0.00'), server_default='0.00')
     time_after = Column(Time, nullable=True)
+    camera_captured_file_name = Column(Text, nullable=True)
+    camera_captured_file_path = Column(Text, nullable=True)
 
     # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="equipment_time")

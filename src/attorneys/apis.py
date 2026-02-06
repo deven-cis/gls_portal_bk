@@ -4,18 +4,23 @@ from fastapi.responses import JSONResponse
 from pathlib import Path
 from sqlalchemy.orm import Session
 from src.attorneys.models import Attorneys
-from src.core.file_utils import save_file
+from src.core.file_utils import save_file, save_image_file
 from src.attorneys.schema import AttorneySchema
 from src.core.logger import logger
 from fastapi import status
-
+from sqlalchemy.orm import Session
+from src.jobs.models import Jobs
+from src.core.context import get_context
+from src.core.database import get_db
+from src.core.timezone_utils import get_timezone_now
 
 async def list_attorneys_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
+        user_entered_by = get_context('entered_by')
         attorneys = db.query(Attorneys).filter(
             Attorneys.job_no == job_no,
             Attorneys.is_archived == False
-        ).all()
+        ).order_by(Attorneys.id.asc()).all()
         
         attorneys_data = [AttorneySchema.model_validate(attorney).model_dump(mode='json') for attorney in attorneys]
         
@@ -48,11 +53,14 @@ async def create_attorney(
     firm_name: str,
     notes: str,
     order_details: str,
+    db: Session,
     document: Optional[UploadFile] = None,
+    camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
-        from src.jobs.models import Jobs
-        job = Jobs.get_queryset().filter(Jobs.job_no == job_no).first()
+        user_entered_by = get_context('entered_by')
+        now = get_timezone_now()
+        job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
         if not job:
             return JSONResponse(
                 content={
@@ -64,9 +72,14 @@ async def create_attorney(
         
         file_name = None
         file_name_path = None
+        camera_captured_file_name = None
+        camera_captured_file_path = None
         
         if document and document.filename:
             file_name, file_name_path = await save_file(document, "attorneys")
+        
+        if camera_captured_file and camera_captured_file.filename:
+            camera_captured_file_name, camera_captured_file_path = await save_image_file(camera_captured_file, "attorneys")
         
         attorney = Attorneys(
             job_no=job_no,
@@ -76,21 +89,30 @@ async def create_attorney(
             order_details=order_details,
             file_name=file_name,
             file_name_path=file_name_path,
+            camera_captured_file_name=camera_captured_file_name,
+            camera_captured_file_path=camera_captured_file_path,
+            entered_by=user_entered_by,
+            last_modified_by=user_entered_by,
+            entered_at=now,
+            last_modified_at=now
         )
-        saved_attorney = Attorneys.save(attorney)
+        db.add(attorney)
+        db.commit()
+        db.refresh(attorney)
         
-        attorney_data = AttorneySchema.model_validate(saved_attorney)
+        attorney_data = AttorneySchema.model_validate(attorney).model_dump(mode='json')
         logger.info(f"Successfully created attorney {attorney_name} for job {job_no}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_201_CREATED,
                 "message": "Attorney created successfully",
                 "success": True,
-                "result": attorney_data.model_dump(mode='json')
+                "result": attorney_data
             },
             status_code=status.HTTP_201_CREATED
         )
     except Exception as e:
+        db.rollback()
         logger.error(f"Error creating attorney {attorney_name} for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
@@ -105,14 +127,17 @@ async def create_attorney(
 async def update_attorney(
     attorney_id: int,
     request: Request,
+    db: Session,
     attorney_name: Optional[str] = None,
     firm_name: Optional[str] = None,
     notes: Optional[str] = None,
     order_details: Optional[str] = None,
     document: Optional[UploadFile] = None,
+    camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
-        db = Attorneys.get_session()
+        user_entered_by = get_context('entered_by')
+        now = get_timezone_now()
         attorney = db.query(Attorneys).filter(
             Attorneys.id == attorney_id,
             Attorneys.is_archived == False
@@ -132,6 +157,7 @@ async def update_attorney(
         
         form_data = await request.form()
         document_field_sent = 'document' in form_data
+        camera_field_sent = 'camera_captured_file' in form_data
         
         fields_updated = []
         
@@ -192,9 +218,43 @@ async def update_attorney(
                 attorney.file_name_path = None
                 fields_updated.append("document")
         
-        attorney.save()
+        if camera_field_sent:
+            if camera_captured_file and camera_captured_file.filename:
+                # Delete old camera file if exists
+                if attorney.camera_captured_file_path:
+                    try:
+                        old_camera_file_path = Path(attorney.camera_captured_file_path)
+                        if old_camera_file_path.exists():
+                            old_camera_file_path.unlink()
+                            logger.info(f"Deleted old camera file: {attorney.camera_captured_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete old camera file {attorney.camera_captured_file_path}: {str(e)}")
+                
+                camera_captured_file_name, camera_captured_file_path = await save_image_file(camera_captured_file, "attorneys")
+                attorney.camera_captured_file_name = camera_captured_file_name
+                attorney.camera_captured_file_path = camera_captured_file_path
+                fields_updated.append("camera_captured_file")
+            else:
+                # Remove camera file if field sent but empty
+                if attorney.camera_captured_file_path:
+                    try:
+                        camera_file_path = Path(attorney.camera_captured_file_path)
+                        if camera_file_path.exists():
+                            camera_file_path.unlink()
+                            logger.info(f"Deleted camera file: {attorney.camera_captured_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete camera file {attorney.camera_captured_file_path}: {str(e)}")
+                
+                attorney.camera_captured_file_name = None
+                attorney.camera_captured_file_path = None
+                fields_updated.append("camera_captured_file")
         
-        attorney_data = AttorneySchema.model_validate(attorney)
+        attorney.last_modified_at = now
+        attorney.last_modified_by = user_entered_by
+        db.add(attorney)
+        db.commit()
+        
+        attorney_data = AttorneySchema.model_validate(attorney).model_dump(mode='json')
         
         if fields_updated:
             message = f"Attorney updated successfully. Fields updated: {', '.join(fields_updated)}"
@@ -206,11 +266,12 @@ async def update_attorney(
                 "status_code": status.HTTP_200_OK,
                 "message": message,
                 "success": True,
-                "result": attorney_data.model_dump(mode='json')
+                "result": attorney_data
             },
             status_code=status.HTTP_200_OK
         )
     except Exception as e:
+        db.rollback()
         logger.error(f"Error updating attorney {attorney_id}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
@@ -223,9 +284,14 @@ async def update_attorney(
         )
 
 
-async def delete_attorney(attorney_id: int) -> JSONResponse:
+async def delete_attorney(attorney_id: int, db: Session) -> JSONResponse:
     try:
-        attorney = Attorneys.get_queryset().filter(Attorneys.id == attorney_id, Attorneys.is_archived == False).first()
+        user_entered_by = get_context('entered_by')
+        now = get_timezone_now()
+        attorney = db.query(Attorneys).filter(
+            Attorneys.id == attorney_id,
+            Attorneys.is_archived == False
+        ).first()
         if not attorney:
             logger.error(f"Attorney with ID {attorney_id} not found")
             return JSONResponse(
@@ -239,7 +305,11 @@ async def delete_attorney(attorney_id: int) -> JSONResponse:
             )
         
         attorney.is_archived = True
-        attorney.save()   
+        attorney.last_modified_at = now
+        attorney.last_modified_by = user_entered_by
+        db.add(attorney)
+        db.commit()
+
         logger.info(f"Successfully deleted attorney {attorney_id}")
         return JSONResponse(
             content={

@@ -13,6 +13,8 @@ class Users(Base):
     login_password = Column(LargeBinary)
     require_password_change = Column(Boolean, default=False)
     profile_image_url = Column(String, nullable=True)
+    person_no = Column(Integer, unique=True, nullable=True, index=True)
+    is_active = Column(Boolean, default=True, server_default='true')
 
     # Jobs assigned TO this user (as assignee)
     assigned_jobs = relationship(

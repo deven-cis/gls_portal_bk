@@ -45,41 +45,32 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     #smtp
-    SMTP_EMAIL: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_SERVER: str = ""
-    SMTP_PORT: int = 0
+    SMTP_EMAIL: str = "devendra.la@cisinlabs.com"
+    SMTP_PASSWORD: str = "tqtdlyownbflixge"
+    SMTP_SERVER: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
     FRONTEND_URL: str = "http://localhost:3000/"
-
-    # External Database (for data sync)
-    EXTERNAL_DB_USER: str = "postgres"
-    EXTERNAL_DB_PASSWORD: str = "admin123"
-    EXTERNAL_DB_HOST: str = "localhost"
-    EXTERNAL_DB_PORT: int = 5432
-    EXTERNAL_DB_NAME: str = "external_db"
-    
 
     # RB9 Database (for data sync)
     RB9_DB_USER: str = "postgres"
     RB9_DB_PASSWORD: str = "admin123"
     RB9_DB_HOST: str = "localhost"
     RB9_DB_PORT: int = 5432
-    RB9_DB_NAME: str = "rb9_db"
+    RB9_DB_NAME: str = "external_db"
     
     # Sync Configuration
     SYNC_DATA_DAYS: int = 1  
     SYNC_INTERVAL_MINUTES: int = 2  
-    SYNC_DATA_SOURCE: str = "rb9_data"
+    SYNC_DATA_SOURCE: str = "external_db"
+    # Sync timeout for large datasets (50-80k records) - in seconds
+    # SYNC_TASK_TIMEOUT_SECONDS: int = 10800  # 3 hours (10800 seconds)
+    # SYNC_TASK_SOFT_TIMEOUT_SECONDS: int = 10200  # 2 hours 50 minutes (soft limit)
 
     
     @property
     def DATABASE_URL(self) -> str:
         return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
-    @property
-    def EXTERNAL_DATABASE_URL(self) -> str:
-        return f"postgresql://{self.EXTERNAL_DB_USER}:{self.EXTERNAL_DB_PASSWORD}@{self.EXTERNAL_DB_HOST}:{self.EXTERNAL_DB_PORT}/{self.EXTERNAL_DB_NAME}"
-    
     @property
     def RB9_DATABASE_URL(self) -> str:
         return f"postgresql://{self.RB9_DB_USER}:{self.RB9_DB_PASSWORD}@{self.RB9_DB_HOST}:{self.RB9_DB_PORT}/{self.RB9_DB_NAME}"

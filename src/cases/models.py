@@ -11,7 +11,7 @@ class Cases(Base):
     status = Column(String, nullable=True)
     trial_date = Column(DateTime, nullable=True)
     case_no = Column(Integer, unique=True, nullable=False, index=True)
-    case_number = Column(Integer, nullable=True)
+    case_number = Column(String(255), nullable=True)
     case_status = Column(String(50), nullable=True)
 
     jobs = relationship(

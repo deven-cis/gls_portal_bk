@@ -1,8 +1,3 @@
-"""
-Stage 2 Users Sync: rb9_db → new_gls_db
-Syncs Users from rb9_db to new_gls_db with field mapping, password generation, and welcome emails.
-"""
-
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -11,13 +6,29 @@ from sqlalchemy.orm import Session
 from src.core.logger import logger
 from src.core.rb9_database import Rb9DatabaseConnection
 from src.core.database import SessionLocal
+from src.core.timezone_utils import get_est_now
 from src.core.sync.synchronization_configuration import get_table_config_stage2
+from src.core.sync.validation_utils import (
+    validate_email_format,
+    normalize_string,
+    check_email_uniqueness
+)
+from src.job_assignment.models import JobAssignment
 from src.users.models import Users
 from src.users.utils import hash_password
-from src.core.sync.email_service import generate_temporary_password, send_user_welcome_notification
+from src.core.email_service import generate_temporary_password, send_user_welcome_notification
 
 
 class UserOnboardingSynchronizationService:
+    
+    # Fields that should never be updated during sync
+    UPDATE_EXCLUDE_FIELDS = [
+        'login_password', 
+        'entered_at', 
+        'entered_by',
+        'last_modified_at',  
+        'last_modified_by'   
+    ]
     
     def __init__(self, rb9_db: Optional[Rb9DatabaseConnection] = None):
         self.rb9_db = rb9_db or Rb9DatabaseConnection()
@@ -46,7 +57,7 @@ class UserOnboardingSynchronizationService:
         exclude_fields: list = None
     ) -> Dict[str, Any]:
         exclude_fields = exclude_fields or []
-        exclude_fields.extend(['id', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by', 'is_archived', 'login_password'])
+        exclude_fields.extend(self.UPDATE_EXCLUDE_FIELDS)
         
         changes = {}
         for field, new_value in mapped_record.items():
@@ -86,7 +97,7 @@ class UserOnboardingSynchronizationService:
         field_mapping = config_data['field_mapping']
         
         try:
-            logger.info("Starting Stage 2 Users sync from rb9_db to new_gls_db")
+            logger.info("Starting Stage 1 Users sync from rb9_db to new_gls_db")
             
             params = {}
             where_clauses = []
@@ -122,41 +133,137 @@ class UserOnboardingSynchronizationService:
             db: Session = SessionLocal()
             try:
                 for rb9_record in rb9_records:
+                    # Use savepoint for each record to allow partial rollback - prevents data loss
+                    savepoint = db.begin_nested()
+                    user_no = None
                     try:
                         user_no = rb9_record.get(unique_field)
                         if not user_no:
-                            logger.warning(f"Skipping User record - missing {unique_field}")
+                            logger.warning(
+                                f"[SKIP] User record missing {unique_field}. Record: {rb9_record}"
+                            )
                             self.stats['skipped'] += 1
+                            savepoint.rollback()
                             continue
                         
                         mapped_record = self._transform_field_names(rb9_record, field_mapping)
                         
+                        # Normalize string fields (trim whitespace, empty to None)
+                        for field in ['email', 'full_name', 'first_name', 'last_name', 'middle_name', 'login_name']:
+                            if field in mapped_record:
+                                mapped_record[field] = normalize_string(mapped_record[field])
+                        
+                        # Validate required fields before processing
+                        email = mapped_record.get('email')
+                        if not email:
+                            logger.warning(
+                                f"[SKIP] User user_no={user_no} missing email. Cannot create user without email."
+                            )
+                            self.stats['skipped'] += 1
+                            savepoint.rollback()
+                            continue
+                        
+                        # Validate email format
+                        is_valid_email, email_error = validate_email_format(email)
+                        if not is_valid_email:
+                            logger.warning(
+                                f"[SKIP] User user_no={user_no} has invalid email format: {email_error}"
+                            )
+                            self.stats['skipped'] += 1
+                            savepoint.rollback()
+                            continue
+                        
                         existing_user = self._find_existing_user(db, user_no)
+                        logger.info(f"User with user_no={user_no} {'exists' if existing_user else 'not found - will create'}")
                         
                         if existing_user:
                             changes = self._detect_field_changes(existing_user, mapped_record)
                             
                             if changes:
+                                # Validate email uniqueness if email is being updated
+                                if 'email' in changes:
+                                    is_unique, uniqueness_error = check_email_uniqueness(
+                                        db, changes['email'], exclude_user_no=user_no
+                                    )
+                                    if not is_unique:
+                                        logger.warning(
+                                            f"[SKIP] User user_no={user_no} update skipped: {uniqueness_error}"
+                                        )
+                                        self.stats['skipped'] += 1
+                                        savepoint.rollback()
+                                        continue
+                                
+                                changed_fields = []
                                 for field, value in changes.items():
-                                    if field == 'login_password':
+                                    # Skip fields that should never be updated
+                                    if field in self.UPDATE_EXCLUDE_FIELDS:
                                         continue
                                     if hasattr(existing_user, field):
+                                        old_value = getattr(existing_user, field, None)
                                         setattr(existing_user, field, value)
+                                        changed_fields.append(f"{field}: {old_value} -> {value}")
                                 
-                                existing_user.last_modified_at = datetime.utcnow()
+                                existing_user.last_modified_at = get_est_now()
                                 
+                                # Commit savepoint first, then main transaction
+                                savepoint.commit()
                                 db.commit()
                                 db.refresh(existing_user)
                                 
                                 self.stats['updated'] += 1
-                                logger.debug(f"Updated User with user_no={user_no}")
+                                logger.info(
+                                    f"[SUCCESS] Updated User user_no={user_no}. "
+                                    f"Changed fields: {', '.join(changed_fields)}"
+                                )
                             else:
                                 self.stats['skipped'] += 1
-                                logger.debug(f"No changes for User with user_no={user_no}, skipping")
+                                savepoint.rollback()
+                                logger.debug(f"[SKIP] No changes for User user_no={user_no}")
                         else:
-                            temp_password = generate_temporary_password()
-                            hashed_password = hash_password(temp_password)
+                            # Validate required fields for new user
+                            if not mapped_record.get('full_name'):
+                                logger.warning(
+                                    f"[SKIP] User user_no={user_no} missing full_name. Cannot create user without full_name."
+                                )
+                                self.stats['skipped'] += 1
+                                savepoint.rollback()
+                                continue
                             
+                            # Validate email uniqueness for new user
+                            is_unique, uniqueness_error = check_email_uniqueness(db, email)
+                            if not is_unique:
+                                logger.warning(
+                                    f"[SKIP] User user_no={user_no} skipped: {uniqueness_error}"
+                                )
+                                self.stats['skipped'] += 1
+                                savepoint.rollback()
+                                continue
+                            
+                            # DEVELOPMENT MODE: Use fixed password "test" for all users
+                            temp_password = "test"
+                            
+                            # PRODUCTION CODE (commented for development):
+                            # temp_password = generate_temporary_password()
+                            # if not temp_password:
+                            #     logger.error(
+                            #         f"[ERROR] Failed to generate password for user_no={user_no}. "
+                            #         f"Stopping processing for this record."
+                            #     )
+                            #     self.stats['errors'] += 1
+                            #     savepoint.rollback()
+                            #     continue
+                            
+                            hashed_password = hash_password(temp_password)
+                            if not hashed_password:
+                                logger.error(
+                                    f"[ERROR] Failed to hash password for user_no={user_no}. "
+                                    f"Stopping processing for this record."
+                                )
+                                self.stats['errors'] += 1
+                                savepoint.rollback()
+                                continue
+                            
+                            est_now = get_est_now()
                             new_user = Users(
                                 user_no=user_no,
                                 full_name=mapped_record.get('full_name', ''),
@@ -166,54 +273,90 @@ class UserOnboardingSynchronizationService:
                                 email=mapped_record.get('email', ''),
                                 login_name=mapped_record.get('login_name'),
                                 login_password=hashed_password,
-                                require_password_change=True,
+                                require_password_change=False,
                                 entered_by=mapped_record.get('entered_by', 0),
-                                last_modified_by=mapped_record.get('last_modified_by', 0)
+                                last_modified_by=mapped_record.get('last_modified_by', 0),
+                                person_no=mapped_record.get('person_no', None),
+                                is_active=mapped_record.get('is_active', False),
+                                entered_at=mapped_record.get('entered_at'), 
+                                last_modified_at=mapped_record.get('last_modified_at')
                             )
                             
-                            if mapped_record.get('entered_at'):
-                                new_user.entered_at = mapped_record.get('entered_at')
-                            if mapped_record.get('last_modified_at'):
-                                new_user.last_modified_at = mapped_record.get('last_modified_at')
-                            
                             db.add(new_user)
+                            # Commit savepoint first, then main transaction
+                            savepoint.commit()
                             db.commit()
                             db.refresh(new_user)
                             
                             self.stats['inserted'] += 1
-                            logger.info(f"Created new User with user_no={user_no}, email={mapped_record.get('email')}")
+                            logger.info(
+                                f"[SUCCESS] Created new User user_no={user_no}, email={mapped_record.get('email')}, "
+                                f"password='##' (development mode - email sending disabled)"
+                            )
                             
-                            user_email = "devendra.la@cisinlabs.com"
-                            if user_email:
-                                full_name = mapped_record.get('full_name', '')
-                                first_name = full_name.split()[0] if full_name else 'User'
-                                login_name = mapped_record.get('login_name') or user_email
-                                
-                                email_sent = send_user_welcome_notification(
-                                    email=user_email,
-                                    first_name=first_name,
-                                    login_name=login_name,
-                                    temp_password=temp_password
-                                )
-                                
-                                if email_sent:
-                                    self.stats['emails_sent'] += 1
-                                    logger.info(f"Welcome email sent to {user_email}")
-                                else:
-                                    logger.warning(f"Failed to send welcome email to {user_email}")
-                            else:
-                                logger.warning(f"No email address for User user_no={user_no}, skipping welcome email")
+                            # DEVELOPMENT MODE: Skip email sending
+                            logger.debug(f"[DEV] Email sending skipped for user_no={user_no} (development mode)")
+                            
+                            # PRODUCTION CODE (commented for development):
+                            # # Send welcome email (non-blocking - email failure doesn't stop sync)
+                            # user_email = mapped_record.get('email')
+                            # if user_email:
+                            #     full_name = mapped_record.get('full_name', '')
+                            #     first_name = full_name.split()[0] if full_name else 'User'
+                            #     login_name = mapped_record.get('login_name') or user_email
+                            #     
+                            #     try:
+                            #         email_sent = send_user_welcome_notification(
+                            #             email=user_email,
+                            #             first_name=first_name,
+                            #             login_name=login_name,
+                            #             temp_password=temp_password
+                            #         )
+                            #         
+                            #         if email_sent:
+                            #             self.stats['emails_sent'] += 1
+                            #             logger.info(f"[EMAIL] Welcome email sent to {user_email}")
+                            #         else:
+                            #             logger.warning(
+                            #                 f"[EMAIL] Failed to send welcome email to {user_email}. "
+                            #                 f"User created successfully but email failed."
+                            #             )
+                            #     except Exception as email_error:
+                            #         logger.warning(
+                            #             f"[EMAIL] Exception sending email to {user_email}: {str(email_error)}. "
+                            #             f"User created successfully but email failed."
+                            #         )
+                            # else:
+                            #     logger.warning(
+                            #         f"[SKIP] No email address for User user_no={user_no}, skipping welcome email"
+                            #     )
                     
                     except Exception as e:
-                        logger.error(
-                            f"Error processing User record with user_no={user_no}: {str(e)}",
-                            exc_info=True
+                        error_msg = (
+                            f"[ERROR] Failed to process User record user_no={user_no}: {str(e)}. "
+                            f"Record data: {rb9_record}. "
+                            f"Rolling back transaction for this record only."
                         )
+                        logger.error(error_msg, exc_info=True)
                         self.stats['errors'] += 1
+                        
+                        # Rollback savepoint (per-record transaction)
                         try:
-                            db.rollback()
+                            savepoint.rollback()
+                            logger.info(f"[RECOVERY] Successfully rolled back transaction for user_no={user_no}")
                         except Exception as rollback_error:
-                            logger.error(f"Failed to rollback transaction: {str(rollback_error)}")
+                            logger.error(
+                                f"[CRITICAL] Failed to rollback savepoint for user_no={user_no}: {str(rollback_error)}. "
+                                f"Attempting main transaction rollback."
+                            )
+                            try:
+                                db.rollback()
+                                logger.info(f"[RECOVERY] Main transaction rolled back successfully")
+                            except Exception as main_rollback_error:
+                                logger.critical(
+                                    f"[CRITICAL] Failed to rollback main transaction: {str(main_rollback_error)}. "
+                                    f"Database may be in inconsistent state. Manual intervention required."
+                                )
                         continue
                 
             finally:
@@ -223,7 +366,7 @@ class UserOnboardingSynchronizationService:
                     logger.error(f"Error closing database session: {str(close_error)}")
             
             logger.info(
-                f"Stage 2 Users sync completed: "
+                f"Stage 1 Users sync completed: "
                 f"Inserted={self.stats['inserted']}, "
                 f"Updated={self.stats['updated']}, "
                 f"Errors={self.stats['errors']}, "
@@ -232,7 +375,7 @@ class UserOnboardingSynchronizationService:
             )
         
         except Exception as e:
-            logger.error(f"Failed to sync Users in Stage 2: {str(e)}", exc_info=True)
+            logger.error(f"Failed to sync Users in Stage 1: {str(e)}", exc_info=True)
             self.stats['errors'] += 1
             try:
                 if 'db' in locals():

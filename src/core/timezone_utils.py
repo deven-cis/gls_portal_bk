@@ -52,3 +52,13 @@ def get_timezone_now() -> datetime:
     except Exception as e:
         logger.error(f"Error getting timezone now: {e}")
         return datetime.now(ZoneInfo("UTC"))
+
+
+def get_est_now() -> datetime:
+    try:
+        est_tz = ZoneInfo("America/New_York")
+        est_now = datetime.now(est_tz)
+        return est_now.replace(tzinfo=None)
+    except Exception as e:
+        logger.error(f"Error getting EST time: {e}")
+        return datetime.utcnow()

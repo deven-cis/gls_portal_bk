@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from src.core.logger import logger
 from src.core.rb9_database import Rb9DatabaseConnection
 from src.core.database import SessionLocal
-from src.core.timezone_utils import get_est_now
+from src.core.timezone_utils import get_timezone_now
 from src.core.sync.synchronization_configuration import get_sync_order, get_table_config_stage2
 from src.core.sync.user_onboarding_synchronization_service import UserOnboardingSynchronizationService
 from src.core.sync.validation_utils import validate_date_range, normalize_string
@@ -402,7 +402,7 @@ class Rb9ToNewGlsSynchronizationService:
                                 update_dict[field] = value
                         
                         if hasattr(existing_record, 'last_modified_at'):
-                            update_dict['last_modified_at'] = get_est_now()
+                            update_dict['last_modified_at'] = get_timezone_now()
                         
                         update_records.append(update_dict)
                 else:
@@ -424,9 +424,9 @@ class Rb9ToNewGlsSynchronizationService:
                     if 'last_modified_by' not in insert_dict:
                         insert_dict['last_modified_by'] = 0
                     if 'entered_at' not in insert_dict:
-                        insert_dict['entered_at'] = get_est_now()
+                        insert_dict['entered_at'] = get_timezone_now()
                     if 'last_modified_at' not in insert_dict:
-                        insert_dict['last_modified_at'] = get_est_now()
+                        insert_dict['last_modified_at'] = get_timezone_now()
                     
                     new_records.append(insert_dict)
             
@@ -560,7 +560,7 @@ class Rb9ToNewGlsSynchronizationService:
                                 changed_fields.append(f"{field}: {old_value} -> {value}")
                         
                         if hasattr(existing_record, 'last_modified_at'):
-                            existing_record.last_modified_at = get_est_now()
+                            existing_record.last_modified_at = get_timezone_now()
                         
                         savepoint.commit()
                         db.commit()
@@ -599,9 +599,9 @@ class Rb9ToNewGlsSynchronizationService:
                     if 'last_modified_by' not in model_kwargs:
                         model_kwargs['last_modified_by'] = 0
                     if 'entered_at' not in model_kwargs:
-                        model_kwargs['entered_at'] = get_est_now()
+                        model_kwargs['entered_at'] = get_timezone_now()
                     if 'last_modified_at' not in model_kwargs:
-                        model_kwargs['last_modified_at'] = get_est_now()
+                        model_kwargs['last_modified_at'] = get_timezone_now()
                     
                     try:
                         new_record = model_class(**model_kwargs)

@@ -29,10 +29,10 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
-    # 'update-job-statuses-every-minute': {
-    #     'task': 'src.jobs.tasks.update_job_statuses',
-    #     'schedule': crontab(minute='*/1'),
-    # },
+    'update-job-statuses-every-day': {
+        'task': 'src.jobs.tasks.update_job_statuses',
+        'schedule': crontab(hour=0, minute=0),  
+    },
     'sync-external-data-every-day': {
         'task': 'src.core.sync.tasks.sync_external_data',
         'schedule': crontab(minute='*/2'),

@@ -28,9 +28,7 @@ def convert_to_timezone(utc_datetime: Optional[datetime], timezone_str: Optional
     
     try:
         timezone_str = timezone_str or get_default_timezone()
-        logger.info(f"Timezone string: {timezone_str}")
         target_tz = _get_timezone_object(timezone_str)
-        logger.info(f"Target timezone: {target_tz}")
         if utc_datetime.tzinfo is None:
             utc_datetime = utc_datetime.replace(tzinfo=ZoneInfo("UTC"))
         

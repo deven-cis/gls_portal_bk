@@ -2,6 +2,7 @@ from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError, DatabaseError, OperationalError
 from src.core.celery_config import celery_app
 from src.core.database import SessionLocal
+from src.core.timezone_utils import get_timezone_now
 from src.jobs.models import Jobs, JobStatusEnum
 from src.core.logger import logger
 
@@ -9,35 +10,36 @@ from src.core.logger import logger
 @celery_app.task(name='src.jobs.tasks.update_job_statuses')
 def update_job_statuses():
 
-    start_time = datetime.utcnow()
+    start_time = get_timezone_now()  # Use timezone based on app environment
+    today = start_time.date()  # Get today's date for comparison (job_date is Date type)
     session = None
     
     try:
-        today = start_time.date()
         logger.info(f"[Celery Task] Starting job status update at {start_time} (date: {today})")
         
         session = SessionLocal()
         
+        # Check for jobs with empty or None computed_status
         jobs_count = session.query(Jobs).filter(
-            Jobs.job_date == today,
-            Jobs.computed_status == ''
+            Jobs.job_date <= today,
+            (Jobs.computed_status == '') | (Jobs.computed_status.is_(None))
         ).count()
         
         if jobs_count == 0:
-            logger.info(f"[Celery Task] No jobs found with today's date ({today}) and empty status")
+            logger.info(f"[Celery Task] No jobs found with job_date <= {today} and empty/None computed_status")
             return {
                 "status": "success",
                 "updated_count": 0,
                 "duration_seconds": 0,
                 "start_time": str(start_time),
-                "end_time": str(datetime.utcnow())
+                "end_time": str(get_timezone_now())
             }
         
-        logger.info(f"[Celery Task] Found {jobs_count} job(s) with today's date and empty status to update")
+        logger.info(f"[Celery Task] Found {jobs_count} job(s) with job_date <= {today} and empty/None computed_status to update")
         
         updated_count = session.query(Jobs).filter(
-            Jobs.job_date == today,
-            Jobs.computed_status == ''
+            Jobs.job_date <= today,
+            (Jobs.computed_status == '') | (Jobs.computed_status.is_(None))
         ).update(
             {Jobs.computed_status: JobStatusEnum.SESSION_NOT_STARTED.value},
             synchronize_session=False
@@ -45,7 +47,7 @@ def update_job_statuses():
         
         session.commit()
         
-        end_time = datetime.utcnow()
+        end_time = get_timezone_now()  # Use timezone based on app environment
         duration = (end_time - start_time).total_seconds()
         
         logger.info(
@@ -62,7 +64,7 @@ def update_job_statuses():
         }
         
     except OperationalError as e:
-        end_time = datetime.utcnow()
+        end_time = get_timezone_now()  # Use timezone based on app environment
         duration = (end_time - start_time).total_seconds()
         
         if session:
@@ -86,7 +88,7 @@ def update_job_statuses():
         }
         
     except DatabaseError as e:
-        end_time = datetime.utcnow()
+        end_time = get_timezone_now()  # Use timezone based on app environment
         duration = (end_time - start_time).total_seconds()
         
         if session:
@@ -110,7 +112,7 @@ def update_job_statuses():
         }
         
     except SQLAlchemyError as e:
-        end_time = datetime.utcnow()
+        end_time = get_timezone_now()  # Use timezone based on app environment
         duration = (end_time - start_time).total_seconds()
         
         if session:
@@ -134,7 +136,7 @@ def update_job_statuses():
         }
         
     except Exception as e:
-        end_time = datetime.utcnow()
+        end_time = get_timezone_now()  # Use timezone based on app environment
         duration = (end_time - start_time).total_seconds()
         
         if session:

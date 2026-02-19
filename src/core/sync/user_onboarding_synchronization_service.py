@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from src.core.logger import logger
 from src.core.rb9_database import Rb9DatabaseConnection
 from src.core.database import SessionLocal
-from src.core.timezone_utils import get_est_now
+from src.core.timezone_utils import get_timezone_now
 from src.core.sync.synchronization_configuration import get_table_config_stage2
 from src.core.sync.validation_utils import (
     validate_email_format,
@@ -203,7 +203,7 @@ class UserOnboardingSynchronizationService:
                                         setattr(existing_user, field, value)
                                         changed_fields.append(f"{field}: {old_value} -> {value}")
                                 
-                                existing_user.last_modified_at = get_est_now()
+                                existing_user.last_modified_at = get_timezone_now()
                                 
                                 # Commit savepoint first, then main transaction
                                 savepoint.commit()
@@ -263,7 +263,6 @@ class UserOnboardingSynchronizationService:
                                 savepoint.rollback()
                                 continue
                             
-                            est_now = get_est_now()
                             new_user = Users(
                                 user_no=user_no,
                                 full_name=mapped_record.get('full_name', ''),

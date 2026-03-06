@@ -62,10 +62,10 @@ class Jobs(Base):
     
     assignment_history = relationship(
         "JobAssignment",
-        back_populates="job",
-        foreign_keys="[JobAssignment.job_no]",
-        primaryjoin="Jobs.job_no == JobAssignment.job_no",
-        order_by="JobAssignment.entered_at.desc()"
+        primaryjoin="Jobs.job_no == JobsTasks.job_no",
+        secondaryjoin="JobsTasks.task_no == JobAssignment.job_task_no",
+        secondary="jobs_tasks",
+        viewonly=True
     )
 
     case = relationship(
@@ -107,6 +107,13 @@ class Jobs(Base):
     # One-to-many relationship with Witnesses
     witnesses = relationship(
         "Witnesses",
+        back_populates="job",
+        cascade="all, delete-orphan"
+    )
+    
+    # One-to-many relationship with JobsTasks
+    tasks = relationship(
+        "JobsTasks",
         back_populates="job",
         cascade="all, delete-orphan"
     )

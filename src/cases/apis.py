@@ -63,7 +63,7 @@ async def get_case(case_id: int, db: Session) -> JSONResponse:
 async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSONResponse:
     
     try:
-        entered_by = get_context("entered_by")
+        current_rsrc_no = get_context("rsrc_no")
         now = get_timezone_now()
         case = db.query(Cases).filter(Cases.id == case_id, Cases.is_archived == False).first()
         if not case:
@@ -98,7 +98,7 @@ async def edit_case(case_id: int, case_data: CaseEditSchema, db: Session) -> JSO
             setattr(case, field, value)
         
         case.last_modified_at = now
-        case.last_modified_by = entered_by
+        case.last_modified_by = current_rsrc_no
         db.add(case)
         db.commit()
         logger.info(f'Case {case_id} updated successfully')

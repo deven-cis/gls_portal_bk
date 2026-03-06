@@ -11,7 +11,7 @@ class CaseSchema(BaseModel):
     case_full_name: Optional[str] = None
     case_type: Optional[str] = None
     status: Optional[str] = None
-    case_number: Optional[int] = None
+    case_number: Optional[str] = None
     trial_date: Optional[datetime] = None
     entered_at: Optional[datetime] = None
     last_modified_at: Optional[datetime] = None
@@ -28,7 +28,7 @@ class CaseListSchema(BaseModel):
     case_short_name: Optional[str] = None
     case_full_name: Optional[str] = None
     case_type: Optional[str] = None
-    case_number: Optional[int] = None
+    case_number: Optional[str] = None
     status: Optional[str] = None
 
     class Config:
@@ -36,14 +36,14 @@ class CaseListSchema(BaseModel):
 
 class CaseEditSchema(BaseModel):
     case_short_name: Optional[str] = None
-    case_number: Optional[int] = None
+    case_number: Optional[str] = None
 
     class Config:
         from_attributes = True 
 
 class GetCaseSchema(BaseModel):
     case_short_name: Optional[str] = None
-    case_number: Optional[int] = None
+    case_number: Optional[str] = None
     mark_is_done: Optional[bool] = None
 
     class Config:

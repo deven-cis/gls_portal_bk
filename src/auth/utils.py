@@ -16,31 +16,31 @@ security = HTTPBearer()
 def create_forget_password_token(data: dict, expiration_delta: int = None):
 
     try:            
-        if not data.get('id'):
-            logger.error(f"User ID is required for creating forget password token")
+        if not data.get('rsrc_no'):
+            logger.error(f"Resource rsrc_no is required for creating forget password token")
             return None
         to_encode = data.copy()
         expiration_time = datetime.now() + timedelta(seconds=expiration_delta or config.EMAIL_EXPIRATION_DELTA)
         to_encode.update({'expire': str(expiration_time.isoformat())})
         forget_password_token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
-        logger.info(f"Forget password token created for user: {data.get('id')}")
+        logger.info(f"Forget password token created for resource: {data.get('rsrc_no')}")
         return forget_password_token
     except Exception as e:
         logger.error(f"Error creating forget password token: {str(e)}")
         return None
 
 def verify_token(token: str):  
-    from src.users.models import Users
+    from src.resources.models import Resources
     try:
         decoded_data = decode_token(token)
     
         if datetime.now() > datetime.fromisoformat(decoded_data.get('expire')):
             logger.warning(f"Token expired")
             raise HTTPException(detail="token expired", status_code=status.HTTP_403_FORBIDDEN)
-        logger.info(f"Token verified for user: {decoded_data.get('id')}")
-        if not Users.get(decoded_data.get('id')):
-            raise HTTPException(detail="user not found", status_code=status.HTTP_401_UNAUTHORIZED)
-        logger.info(f"User found: {decoded_data.get('id')}")
+        logger.info(f"Token verified for resource: {decoded_data.get('rsrc_no')}")
+        if not Resources.get(decoded_data.get('rsrc_no')):
+            raise HTTPException(detail="resource not found", status_code=status.HTTP_401_UNAUTHORIZED)
+        logger.info(f"Resource found: {decoded_data.get('rsrc_no')}")
     except Exception as e:
         logger.error(f"Error verifying token: {str(e)}")
         return None
@@ -64,7 +64,7 @@ def create_tokens(data: dict, token_type: str = 'access') -> dict:
     })
     
     token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
-    logger.info(f"Token created for user: {data.get('id')}")
+    logger.info(f"Token created for resource: {data.get('rsrc_no')}")
     return {
         'token': token,
         'expires': expire.isoformat()
@@ -83,7 +83,7 @@ def create_access_token(data: dict) -> dict:
             'entered_by': data.get('entered_by')
         }
     except Exception as e:
-        logger.error(f"Error creating access token({data.get('id')}): {str(e)}")
+        logger.error(f"Error creating access token({data.get('rsrc_no')}): {str(e)}")
         return None
 
 def decode_token(token: str, token_type: str = None):
@@ -132,29 +132,29 @@ def decode_token(token: str, token_type: str = None):
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
 
     try:
-        from src.users.models import Users
+        from src.resources.models import Resources
         set_context(db=db)
         decoded_data = decode_token(credentials.credentials)
-        user_id = decoded_data.get('id')
-        user = db.query(Users).filter(Users.id == user_id).first()
+        rsrc_no = decoded_data.get('rsrc_no')
+        rsrc = db.query(Resources).filter(Resources.rsrc_no == rsrc_no).first()
         
-        if not user:
-            logger.warning(f"User not found with ID: {user_id}")
+        if not rsrc:
+            logger.warning(f"Resource not found with rsrc_no: {rsrc_no}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
+                detail="Resource not found"
             )
             
-        if getattr(user, 'require_password_change', False):
-            logger.info(f"Password change required for user: {user.id}")
+        if getattr(rsrc, 'require_password_change', False):
+            logger.info(f"Password change required for resource: {rsrc.rsrc_no}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Password change required"
             )
         
-        set_context(login_name=user.email)
-        set_context(user_id=user.id)
-        set_context(entered_by=user.user_no)
+        set_context(login_name=rsrc.email)
+        set_context(rsrc_no=rsrc.rsrc_no)
+        set_context(rsrc_id=rsrc.id)
         
         decoded_data.pop('exp', None) 
         decoded_data.pop('type', None)
@@ -165,7 +165,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get_current_user({user.id}): {str(e)}")
+        logger.error(f"Error in get_current_user({rsrc.rsrc_no}): {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not validate credentials"

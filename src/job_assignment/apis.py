@@ -13,7 +13,6 @@ from src.billings.models import Billings
 from src.equipment_time.models import EquipmentTime
 from src.additional_documents.models import AdditionalDocuments
 from src.core.context import get_context
-from src.users.models import Users
 from src.jobs.models import JobStatusEnum
 from src.core.timezone_utils import get_timezone_now
 

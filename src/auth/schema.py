@@ -5,8 +5,8 @@ class LoginCredentialSchema(BaseModel):
     login_name: str
     login_password: str
 
-class UserResponseSchema(BaseModel):
-    id: int
+class ResourceResponseSchema(BaseModel):
+    rsrc_no: int
     full_name: str
     email: str
     login_name: str
@@ -19,7 +19,7 @@ class TokenResponseSchema(BaseModel):
     refresh_token: str
     expires_in: int
     token_type: str
-    user: UserResponseSchema
+    resource: ResourceResponseSchema
 
 
 class PasswordResetSchema(BaseModel):

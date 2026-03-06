@@ -11,7 +11,7 @@ from src.core.rb9_database import Rb9DatabaseConnection
 from src.core.database import SessionLocal
 from src.core.timezone_utils import get_timezone_now
 from src.core.sync.synchronization_configuration import get_sync_order, get_table_config_stage2
-from src.core.sync.user_onboarding_synchronization_service import UserOnboardingSynchronizationService
+from src.core.sync.resource_onboarding_synchronization_service import ResourceOnboardingSynchronizationService
 from src.core.sync.validation_utils import validate_date_range, normalize_string
 
 
@@ -21,14 +21,20 @@ class Rb9ToNewGlsSynchronizationService:
     TABLE_UPDATE_EXCLUDE_FIELDS = {
         'Cases': ['case_number', 'case_short_name', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
         'Users': ['login_password', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
-        'Jobs': ['entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'] 
+        'Resources': ['login_password', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
+        'Jobs': ['entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
+        'JobsTasks': ['entered_at', 'entered_by', 'last_modified_at', 'last_modified_by']
     }
     
     FOREIGN_KEY_VALIDATIONS = {
         'Jobs': {
             'case_no': ('Cases', 'case_no')
+        },
+        'JobsTasks': {
+            'job_no': ('Jobs', 'job_no'),
+            'rsrc_no': ('Resources', 'rsrc_no') 
         }
-    }
+    }   
     
     def __init__(self, rb9_db: Optional[Rb9DatabaseConnection] = None):
         self.rb9_db = rb9_db or Rb9DatabaseConnection()
@@ -41,9 +47,9 @@ class Rb9ToNewGlsSynchronizationService:
     
     def _resolve_model_class(self, model_class_name: str):
         try:
-            if model_class_name == 'Users':
-                from src.users.models import Users
-                return Users
+            if model_class_name == 'Resources':
+                from src.resources.models import Resources
+                return Resources
             elif model_class_name == 'Cases':
                 from src.cases.models import Cases
                 return Cases
@@ -176,9 +182,9 @@ class Rb9ToNewGlsSynchronizationService:
             self.stats['errors'] = 1
             return self.stats
         
-        if table_name == 'Users':
-            users_service = UserOnboardingSynchronizationService(self.rb9_db)
-            return users_service.synchronize_users(start_date=start_date, end_date=end_date, limit=limit)
+        if table_name == 'Resources':
+            users_service = ResourceOnboardingSynchronizationService(self.rb9_db)
+            return users_service.synchronize_resources(start_date=start_date, end_date=end_date, limit=limit)
         
         config_data = get_table_config_stage2(table_name)
         if not config_data:

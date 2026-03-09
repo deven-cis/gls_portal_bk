@@ -155,6 +155,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         set_context(login_name=rsrc.email)
         set_context(rsrc_no=rsrc.rsrc_no)
         set_context(rsrc_id=rsrc.id)
+        set_context(rsrc_type=rsrc.rsrc_type)
         
         decoded_data.pop('exp', None) 
         decoded_data.pop('type', None)

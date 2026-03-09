@@ -16,67 +16,71 @@ from src.core.file_utils import save_multiple_files, save_image_file
 from src.core.logger import logger
 from src.core.context import get_context
 from src.core.timezone_utils import get_timezone_now
-
+from src.jobs_tasks.models import JobsTasks
+from src.jobs.models import Jobs
 
 async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
-        equipment_time = db.query(EquipmentTime).filter(
-            EquipmentTime.job_no == job_no,
-            EquipmentTime.is_archived == False
-        ).first()
-        
+        current_rsrc_no = get_context('rsrc_no')
+
+        equipment_time = (
+            db.query(EquipmentTime)
+            .join(Jobs, EquipmentTime.job_no == Jobs.job_no)
+            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+            .filter(
+                EquipmentTime.job_no == job_no,
+                EquipmentTime.is_archived == False,
+                Jobs.is_archived == False,
+                JobsTasks.rsrc_no == current_rsrc_no,
+                JobsTasks.is_archived == False
+            )
+            .first()
+        )
+
         if not equipment_time:
-            logger.error(f"Equipment time for job_no {job_no} not found")
+            logger.error(f"Equipment time for job_no {job_no} not found or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Equipment time for job_no {job_no} not found",
+                    "message": f"Equipment time for job_no {job_no} not found or access denied",
                     "success": False,
                     "result": {}
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
-        documents = db.query(AdditionalDocuments).filter(
-            AdditionalDocuments.equipment_time_id == equipment_time.id,
-            AdditionalDocuments.is_archived == False
-        ).all()
-        
-        logger.info(
-            f"Found {len(documents)} document(s) for equipment_time_id {equipment_time.id}, job_no {job_no}"
+
+        documents = (
+            db.query(AdditionalDocuments)
+            .filter(
+                AdditionalDocuments.equipment_time_id == equipment_time.id,
+                AdditionalDocuments.is_archived == False
+            )
+            .all()
         )
-        
+
         documents_data = [
             AdditionalDocumentResponseSchema.model_validate(doc).model_dump()
             for doc in documents
         ]
-        
-        logger.info(f"Serialized {len(documents_data)} document(s) successfully")
-        
-        time_after_str = None
-        if equipment_time.time_after:
-            time_after_str = str(equipment_time.time_after)
-        
-        parking_cost_str = str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00"
-        
+
         equipment_time_with_docs = EquipmentTimeWithDocumentsSchema(
             id=equipment_time.id,
             job_no=equipment_time.job_no,
             laptop_used=equipment_time.laptop_used,
             pip_used=equipment_time.pip_used,
             exhibit_tech=equipment_time.exhibit_tech,
-            parking_cost=parking_cost_str,
-            time_after=time_after_str,
+            parking_cost=str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00",
+            time_after=str(equipment_time.time_after) if equipment_time.time_after else None,
             camera_captured_file_name=equipment_time.camera_captured_file_name,
             camera_captured_file_path=equipment_time.camera_captured_file_path,
             documents=documents_data
         )
-        
+
         logger.info(
             f"Successfully retrieved equipment_time for job {job_no} "
             f"(equipment_time_id: {equipment_time.id}) with {len(documents_data)} document(s)"
         )
-        
+
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -86,6 +90,7 @@ async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
             },
             status_code=status.HTTP_200_OK
         )
+
     except Exception as e:
         logger.error(f"Error getting equipment_time for job {job_no}: {str(e)}", exc_info=True)
         return JSONResponse(
@@ -111,136 +116,123 @@ async def create_equipment_time(
     camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
-        entered_by = get_context("entered_by")
+        current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        from src.jobs.models import Jobs
-        job = db.query(Jobs).filter(Jobs.job_no == job_no).first()
+
+        # Validate job exists and resource has access
+        job = (
+            db.query(Jobs.job_no)
+            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+            .filter(
+                Jobs.job_no == job_no,
+                Jobs.is_archived == False,
+                JobsTasks.rsrc_no == current_rsrc_no,
+                JobsTasks.is_archived == False
+            )
+            .first()
+        )
+
         if not job:
-            logger.error(f"Job with job_no {job_no} not found")
+            logger.error(f"Job with job_no {job_no} not found or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Job with job_no {job_no} not found",
+                    "message": f"Job with job_no {job_no} not found or access denied",
                     "success": False,
-                    "result": []
+                    "result": {}
                 },
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND
             )
-        
-        parking_cost_decimal = Decimal(parking_cost) if parking_cost else Decimal('0.00')
-        
-        camera_captured_file_name = None
-        camera_captured_file_path = None
-        if camera_captured_file and camera_captured_file.filename:
-            camera_captured_file_name, camera_captured_file_path = await save_image_file(
-                camera_captured_file, "equipment_time"
-            )
-        
-        equipment_time = EquipmentTime(
-            job_no=job_no,
-            laptop_used=laptop_used,
-            pip_used=pip_used,
-            exhibit_tech=exhibit_tech,
-            parking_cost=parking_cost_decimal,
-            time_after=time_after,
-            camera_captured_file_name=camera_captured_file_name,
-            camera_captured_file_path=camera_captured_file_path,
-            entered_by=entered_by,
-            entered_at=now,
-            last_modified_by=entered_by,
-            last_modified_at=now
+
+        # Handle camera file upload
+        camera_captured_file_name, camera_captured_file_path = (
+            await save_image_file(camera_captured_file, "equipment_time")
+            if camera_captured_file and camera_captured_file.filename
+            else (None, None)
         )
+
+        # Create equipment time via setattr
+        equipment_time = EquipmentTime()
+        equipment_payload = {
+            "job_no": job_no,
+            "laptop_used": laptop_used,
+            "pip_used": pip_used,
+            "exhibit_tech": exhibit_tech,
+            "parking_cost": Decimal(parking_cost) if parking_cost else Decimal('0.00'),
+            "time_after": time_after,
+            "camera_captured_file_name": camera_captured_file_name,
+            "camera_captured_file_path": camera_captured_file_path,
+            "entered_by": current_rsrc_no,
+            "entered_at": now,
+            "last_modified_by": current_rsrc_no,
+            "last_modified_at": now
+        }
+        for key, value in equipment_payload.items():
+            setattr(equipment_time, key, value)
+
         db.add(equipment_time)
+        db.flush()  # get equipment_time.id before commit
+
+        # Handle additional documents
+        documents_created = 0
+        valid_files = [f for f in files if f and f.filename] if files else []
+        if valid_files:
+            saved_files = await save_multiple_files(valid_files, "equipment_time")
+            for file_name, file_path in saved_files:
+                doc = AdditionalDocuments()
+                doc_payload = {
+                    "job_no": job_no,
+                    "equipment_time_id": equipment_time.id,
+                    "file_name": file_name,
+                    "file_path": file_path,
+                    "entered_by": current_rsrc_no,
+                    "last_modified_by": current_rsrc_no,
+                    "entered_at": now,
+                    "last_modified_at": now
+                }
+                for key, value in doc_payload.items():
+                    setattr(doc, key, value)
+                db.add(doc)
+                documents_created += 1
+
         db.commit()
         db.refresh(equipment_time)
-        
-        logger.info(f"Created equipment_time with id={equipment_time.id} for job_no={job_no}")
-        
-        documents_created = 0
-        logger.info(f"Files received: {files is not None}, Count: {len(files) if files else 0}")
-        
-        if files and len(files) > 0:
-            try:
-                valid_files = [f for f in files if f and f.filename]
-                logger.info(f"Valid files to save: {len(valid_files)}")
-                
-                if valid_files:
-                    saved_files = await save_multiple_files(valid_files, "equipment_time")
-                    logger.info(f"Saving {len(saved_files)} file(s) for equipment_time_id {equipment_time.id}")
-                    
-                    for file_name, file_path in saved_files:
-                        try:
-                            doc = AdditionalDocuments(
-                                job_no=job_no,
-                                equipment_time_id=equipment_time.id,
-                                file_name=file_name,
-                                file_path=file_path,
-                                entered_by=entered_by,
-                                last_modified_by=entered_by,
-                                entered_at=now,
-                                last_modified_at=now,
-                            )
-                            db.add(doc)
-                            documents_created += 1
-                            logger.info(f"Successfully saved document: id={doc.id}, file_name={file_name}, file_path={file_path}, equipment_time_id={equipment_time.id}")
-                        except Exception as doc_error:
-                            logger.error(f"Error saving document {file_name}: {str(doc_error)}", exc_info=True)
-                            continue
-                else:
-                    logger.warning("No valid files found in files list")
-            except Exception as file_error:
-                logger.error(f"Error processing files: {str(file_error)}", exc_info=True)
-        else:
-            logger.info("No files provided for equipment_time creation")
-        
-        created_documents = db.query(AdditionalDocuments).filter(
-            AdditionalDocuments.equipment_time_id == equipment_time.id,
-            AdditionalDocuments.is_archived == False
-        ).all()
-        
-        logger.info(f"Found {len(created_documents)} document(s) in database for equipment_time_id {equipment_time.id}")
-        
+
+        # Fetch saved documents
         documents_data = [
             AdditionalDocumentResponseSchema.model_validate(doc).model_dump()
-            for doc in created_documents
+            for doc in db.query(AdditionalDocuments).filter(
+                AdditionalDocuments.equipment_time_id == equipment_time.id,
+                AdditionalDocuments.is_archived == False
+            ).all()
         ]
-        
-        time_after_str = None
-        if equipment_time.time_after:
-            time_after_str = str(equipment_time.time_after)
-        
-        parking_cost_str = str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00"
-        
+
         equipment_time_with_docs = EquipmentTimeWithDocumentsSchema(
             id=equipment_time.id,
             job_no=equipment_time.job_no,
             laptop_used=equipment_time.laptop_used,
             pip_used=equipment_time.pip_used,
             exhibit_tech=equipment_time.exhibit_tech,
-            parking_cost=parking_cost_str,
-            time_after=time_after_str,
+            parking_cost=str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00",
+            time_after=str(equipment_time.time_after) if equipment_time.time_after else None,
             camera_captured_file_name=equipment_time.camera_captured_file_name,
             camera_captured_file_path=equipment_time.camera_captured_file_path,
             documents=documents_data
         )
-        
-        message = "Equipment time created successfully"
-        if documents_created:
-            message += f" with {documents_created} document(s)"
-        
-        logger.info(f"Returning equipment_time with {len(documents_data)} document(s) in response")
-        
+
+        message = f"Equipment time created successfully with {documents_created} document(s)" if documents_created else "Equipment time created successfully"
+        logger.info(f"Equipment time created for job {job_no} with {documents_created} document(s)")
+
         return JSONResponse(
             content={
                 "status_code": status.HTTP_201_CREATED,
                 "message": message,
                 "success": True,
-                "result": equipment_time_with_docs.model_dump(),
+                "result": equipment_time_with_docs.model_dump()
             },
-            status_code=status.HTTP_201_CREATED,
+            status_code=status.HTTP_201_CREATED
         )
-    except HTTPException:
-        raise
+
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating equipment_time for job {job_no}: {str(e)}", exc_info=True)
@@ -249,9 +241,9 @@ async def create_equipment_time(
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "message": f"Failed to create equipment_time: {str(e)}",
                 "success": False,
-                "result": [],
+                "result": {}
             },
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
@@ -268,171 +260,159 @@ async def update_equipment_time(
     camera_captured_file: Optional[UploadFile] = None,
 ) -> JSONResponse:
     try:
-        entered_by = get_context("entered_by")
+        current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        equipment_time = db.query(EquipmentTime).filter(
-            EquipmentTime.id == equipment_time_id,
-            EquipmentTime.is_archived == False
-        ).first()
-        
+
+        equipment_time = (
+            db.query(EquipmentTime)
+            .join(Jobs, EquipmentTime.job_no == Jobs.job_no)
+            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+            .filter(
+                EquipmentTime.id == equipment_time_id,
+                EquipmentTime.is_archived == False,
+                Jobs.is_archived == False,
+                JobsTasks.rsrc_no == current_rsrc_no,
+                JobsTasks.is_archived == False
+            )
+            .first()
+        )
+
         if not equipment_time:
-            logger.error(f"Equipment time with ID {equipment_time_id} not found")
+            logger.error(f"Equipment time with ID {equipment_time_id} not found or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Equipment time with ID {equipment_time_id} not found",
+                    "message": f"Equipment time with ID {equipment_time_id} not found or access denied",
                     "success": False,
                     "result": {}
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
         fields_updated = []
-        
-        if laptop_used is not None:
-            equipment_time.laptop_used = laptop_used.lower() in ['true', '1', 'yes']
-            fields_updated.append("laptop_used")
-        
-        if pip_used is not None:
-            equipment_time.pip_used = pip_used.lower() in ['true', '1', 'yes']
-            fields_updated.append("pip_used")
-        
-        if exhibit_tech is not None:
-            equipment_time.exhibit_tech = exhibit_tech.lower() in ['true', '1', 'yes']
-            fields_updated.append("exhibit_tech")
-        
+        form_data = await request.form()
+
+        # Boolean fields
+        bool_fields = {
+            "laptop_used": laptop_used,
+            "pip_used": pip_used,
+            "exhibit_tech": exhibit_tech
+        }
+        for field, value in bool_fields.items():
+            if value is not None:
+                setattr(equipment_time, field, value.lower() in ['true', '1', 'yes'])
+                fields_updated.append(field)
+
+        # Parking cost
         if parking_cost is not None:
             try:
                 equipment_time.parking_cost = Decimal(parking_cost) if parking_cost else Decimal('0.00')
                 fields_updated.append("parking_cost")
             except (ValueError, TypeError) as e:
                 logger.warning(f"Invalid parking_cost value: {parking_cost}, error: {str(e)}")
-        
+
+        # Time after
         if time_after is not None:
-            if isinstance(time_after, str):
-                equipment_time.time_after = time_after.strip() if time_after.strip() else time_after
-            else:
-                equipment_time.time_after = time_after
+            equipment_time.time_after = time_after.strip() if isinstance(time_after, str) else time_after
             fields_updated.append("time_after")
-        
-        form_data = await request.form()
-        remove_documents = form_data.getlist("remove_documents") if "remove_documents" in form_data else []
-        camera_field_sent = "camera_captured_file" in form_data
-        
-        documents_removed = 0
-        if remove_documents:
-            for doc_id_str in remove_documents:
+
+        # Helper to delete file safely
+        def delete_file_if_exists(file_path: Optional[str], label: str):
+            if file_path:
                 try:
-                    doc_id = int(doc_id_str)
-                    doc = db.query(AdditionalDocuments).filter(
-                        AdditionalDocuments.id == doc_id,
+                    path = Path(file_path)
+                    if path.exists():
+                        path.unlink()
+                        logger.info(f"Deleted {label}: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete {label} {file_path}: {str(e)}")
+
+        # Remove documents
+        documents_removed = 0
+        for doc_id_str in form_data.getlist("remove_documents"):
+            try:
+                doc = (
+                    db.query(AdditionalDocuments)
+                    .filter(
+                        AdditionalDocuments.id == int(doc_id_str),
                         AdditionalDocuments.equipment_time_id == equipment_time_id,
                         AdditionalDocuments.is_archived == False
-                    ).first()
-                    
-                    if doc:
-                        if doc.file_path:
-                            try:
-                                file_path = Path(doc.file_path)
-                                if file_path.exists():
-                                    file_path.unlink()
-                                    logger.info(f"Deleted file: {doc.file_path}")
-                            except Exception as e:
-                                logger.warning(f"Failed to delete file {doc.file_path}: {str(e)}")
-                        
-                        doc.is_archived = True
-                        doc.last_modified_at = now
-                        doc.last_modified_by = entered_by
-                        db.add(doc)
-                        documents_removed += 1
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Invalid document ID: {doc_id_str}, error: {str(e)}")
-                    continue
-        
+                    )
+                    .first()
+                )
+                if doc:
+                    delete_file_if_exists(doc.file_path, "document")
+                    doc.is_archived = True
+                    doc.last_modified_at = now
+                    doc.last_modified_by = current_rsrc_no
+                    db.add(doc)
+                    documents_removed += 1
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid document ID: {doc_id_str}, error: {str(e)}")
+                continue
+
         if documents_removed > 0:
             fields_updated.append(f"documents (removed {documents_removed})")
-        
+
+        # Upload new documents
         documents_uploaded = 0
-        if files:
-            saved_files = await save_multiple_files(files, "equipment_time")
-            logger.info(f"Uploading {len(saved_files)} file(s) for equipment_time_id {equipment_time.id}")
+        valid_files = [f for f in files if f and f.filename] if files else []
+        if valid_files:
+            saved_files = await save_multiple_files(valid_files, "equipment_time")
             for file_name, file_path in saved_files:
-                doc = AdditionalDocuments(
-                    job_no=equipment_time.job_no,
-                    equipment_time_id=equipment_time.id,
-                    file_name=file_name,
-                    file_path=file_path,
-                    entered_by=entered_by,
-                    last_modified_by=entered_by,
-                    entered_at=now,
-                    last_modified_at=now,
-                )
+                doc = AdditionalDocuments()
+                for key, value in {
+                    "job_no": equipment_time.job_no,
+                    "equipment_time_id": equipment_time.id,
+                    "file_name": file_name,
+                    "file_path": file_path,
+                    "entered_by": current_rsrc_no,
+                    "last_modified_by": current_rsrc_no,
+                    "entered_at": now,
+                    "last_modified_at": now
+                }.items():
+                    setattr(doc, key, value)
                 db.add(doc)
                 documents_uploaded += 1
-                logger.info(f"Uploaded document: id={doc.id}, file_name={file_name}, equipment_time_id={equipment_time.id}")
-        
+
         if documents_uploaded > 0:
             fields_updated.append(f"documents (uploaded {documents_uploaded})")
 
-        # Handle camera-captured image
-        if camera_field_sent:
+        # Camera file handling
+        if 'camera_captured_file' in form_data:
+            delete_file_if_exists(equipment_time.camera_captured_file_path, "camera_captured_file")
             if camera_captured_file and camera_captured_file.filename:
-                # Delete old camera file if exists
-                if equipment_time.camera_captured_file_path:
-                    try:
-                        old_camera_file_path = Path(equipment_time.camera_captured_file_path)
-                        if old_camera_file_path.exists():
-                            old_camera_file_path.unlink()
-                            logger.info(f"Deleted old camera file: {equipment_time.camera_captured_file_path}")
-                    except Exception as e:
-                        logger.warning(f"Failed to delete old camera file {equipment_time.camera_captured_file_path}: {str(e)}")
-                camera_captured_file_name, camera_captured_file_path = await save_image_file(
-                    camera_captured_file, "equipment_time"
+                equipment_time.camera_captured_file_name, equipment_time.camera_captured_file_path = (
+                    await save_image_file(camera_captured_file, "equipment_time")
                 )
-                equipment_time.camera_captured_file_name = camera_captured_file_name
-                equipment_time.camera_captured_file_path = camera_captured_file_path
-                fields_updated.append("camera_captured_file")
             else:
-                # Remove camera file if field sent but empty
-                if equipment_time.camera_captured_file_path:
-                    try:
-                        camera_file_path = Path(equipment_time.camera_captured_file_path)
-                        if camera_file_path.exists():
-                            camera_file_path.unlink()
-                            logger.info(f"Deleted camera file: {equipment_time.camera_captured_file_path}")
-                    except Exception as e:
-                        logger.warning(f"Failed to delete camera file {equipment_time.camera_captured_file_path}: {str(e)}")
                 equipment_time.camera_captured_file_name = None
                 equipment_time.camera_captured_file_path = None
-                fields_updated.append("camera_captured_file")
-        
+            fields_updated.append("camera_captured_file")
+
         equipment_time.last_modified_at = now
-        equipment_time.last_modified_by = entered_by
+        equipment_time.last_modified_by = current_rsrc_no
         db.add(equipment_time)
         db.commit()
         db.refresh(equipment_time)
-        
-        time_after_str = None
-        if equipment_time.time_after:
-            time_after_str = str(equipment_time.time_after)
-        
-        parking_cost_str = str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00"
-        
+
         equipment_time_data = EquipmentTimeSchema(
             id=equipment_time.id,
             job_no=equipment_time.job_no,
             laptop_used=equipment_time.laptop_used,
             pip_used=equipment_time.pip_used,
             exhibit_tech=equipment_time.exhibit_tech,
-            parking_cost=parking_cost_str,
-            time_after=time_after_str
+            parking_cost=str(equipment_time.parking_cost) if equipment_time.parking_cost else "0.00",
+            time_after=str(equipment_time.time_after) if equipment_time.time_after else None
         )
-        
-        if fields_updated:
-            message = f"Equipment time updated successfully. Fields updated: {', '.join(fields_updated)}"
-        else:
-            message = "No changes provided. Equipment time data remains unchanged."
-        
+
+        message = (
+            f"Equipment time updated successfully. Fields updated: {', '.join(fields_updated)}"
+            if fields_updated
+            else "No changes provided. Equipment time data remains unchanged."
+        )
+
+        logger.info(f"Equipment time {equipment_time_id} updated successfully for job {equipment_time.job_no}")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -442,9 +422,9 @@ async def update_equipment_time(
             },
             status_code=status.HTTP_200_OK
         )
-    except HTTPException:
-        raise
+
     except Exception as e:
+        db.rollback()
         logger.error(f"Error updating equipment_time {equipment_time_id}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
@@ -457,36 +437,58 @@ async def update_equipment_time(
         )
 
 
+
 async def delete_equipment_time(equipment_time_id: int, db: Session) -> JSONResponse:
     try:
-        entered_by = get_context("entered_by")
+        current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        equipment_time = db.query(EquipmentTime).filter(
-            EquipmentTime.id == equipment_time_id,
-            EquipmentTime.is_archived == False
-        ).first()
-        
+
+        equipment_time = (
+            db.query(EquipmentTime)
+            .join(Jobs, EquipmentTime.job_no == Jobs.job_no)
+            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+            .filter(
+                EquipmentTime.id == equipment_time_id,
+                EquipmentTime.is_archived == False,
+                Jobs.is_archived == False,
+                JobsTasks.rsrc_no == current_rsrc_no,
+                JobsTasks.is_archived == False
+            )
+            .first()
+        )
+
         if not equipment_time:
-            logger.error(f"Equipment time with ID {equipment_time_id} not found")
+            logger.error(f"Equipment time with ID {equipment_time_id} not found or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": f"Equipment time with ID {equipment_time_id} not found",
+                    "message": f"Equipment time with ID {equipment_time_id} not found or access denied",
                     "success": False,
                     "result": {}
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
+        # Archive associated documents
+        db.query(AdditionalDocuments).filter(
+            AdditionalDocuments.equipment_time_id == equipment_time_id,
+            AdditionalDocuments.is_archived == False
+        ).update(
+            {
+                "is_archived": True,
+                "last_modified_at": now,
+                "last_modified_by": current_rsrc_no
+            },
+            synchronize_session=False
+        )
+
         equipment_time.is_archived = True
         equipment_time.last_modified_at = now
-        equipment_time.last_modified_by = entered_by
+        equipment_time.last_modified_by = current_rsrc_no
         db.add(equipment_time)
         db.commit()
-        db.refresh(equipment_time)
-        
-        logger.info(f"Successfully deleted equipment_time {equipment_time_id}")
-        
+
+        logger.info(f"Equipment time {equipment_time_id} and associated documents deleted successfully")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -496,9 +498,10 @@ async def delete_equipment_time(equipment_time_id: int, db: Session) -> JSONResp
             },
             status_code=status.HTTP_200_OK
         )
+
     except Exception as e:
-        logger.error(f"Error deleting equipment_time {equipment_time_id}: {str(e)}", exc_info=True)
         db.rollback()
+        logger.error(f"Error deleting equipment_time {equipment_time_id}: {str(e)}", exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -10,7 +10,7 @@ from src.jobs.models import Jobs
 from src.witness_videos.models import WitnessVideos
 from src.jobs_tasks.schema import JobsTaskCalendarSchema
 from src.witnesses.models import Witnesses
-
+from src.core.context import get_context
 
 def format_time_for_calendar(time_obj) -> str:
     if isinstance(time_obj, str):
@@ -102,46 +102,43 @@ def build_calendar_event_title(job) -> str:
     return f"{job.case.case_type if job.case and job.case.case_type else ''}: {case_name}{location}"
 
 
-def build_calendar_event_title_from_jobstask(jobstask) -> str:
+def build_calendar_event_title_from_jobstask(job) -> str:
     case_name = "Unknown Case"
     location = ""
     
-    if jobstask.case:
-        if jobstask.case.case_short_name:
-            case_name = jobstask.case.case_short_name
-        elif jobstask.case.case_full_name:
-            case_name = jobstask.case.case_full_name
+    if job.case:
+        if job.case.case_short_name:
+            case_name = job.case.case_short_name
+        elif job.case.case_full_name:
+            case_name = job.case.case_full_name
     
-    if jobstask.job_loc_name:
-        location = f" - {jobstask.job_loc_name}"
-    
-    return f"{jobstask.case.case_type if jobstask.case and jobstask.case.case_type else ''}: {case_name}{location}"
+    return f"{job.case.case_type if job.case and job.case.case_type else ''}: {case_name}"
 
 
-def jobstask_to_calendar_event(jobstask, db: Session) -> JobsTaskCalendarSchema:
-    witness_videos_status = get_video_upload_status(jobstask.job_no, db)
-    title = build_calendar_event_title_from_jobstask(jobstask)
+def jobstask_to_calendar_event(job, db: Session) -> JobsTaskCalendarSchema:
+    rsrc_type = get_context('rsrc_type')
+    witness_videos_status = get_video_upload_status(job.job_no, db)
+    title = build_calendar_event_title_from_jobstask(job)
     status = None
     
-    start_time_str = format_time_for_calendar(jobstask.start_time)
-    end_time_str = format_time_for_calendar(jobstask.end_time)
+    start_time_str = format_time_for_calendar(job.start_time)
+    end_time_str = format_time_for_calendar(job.end_time)
     
-    deadline = jobstask.video_upload_deadline
+    deadline = job.video_upload_deadline
     
     return JobsTaskCalendarSchema(
-        id=jobstask.id,
-        task_no=jobstask.task_no,
-        case_id=jobstask.case.id if jobstask.case else None,
+        id=job.job_no,
+        case_id=job.case.id if job.case else None,
         title=title,
-        date=jobstask.job_date,
+        date=job.job_date,
         startTime=start_time_str,
         endTime=end_time_str,
         status=status,
-        computed_status=jobstask.computed_status,
+        computed_status=job.computed_status,
         deadline=deadline,
-        type= jobstask.case.case_type if jobstask.case and jobstask.case.case_type else '',
+        type= job.case.case_type if job.case and job.case.case_type else '',
         witness_videos_status=witness_videos_status.get("witness_videos_status",{}),
-        resource=jobstask.resource
+        rsrc_type = rsrc_type
     )
 
 

@@ -39,19 +39,12 @@ class JobsTaskSchema(JobSchema):  # Inherit from JobSchema to get all job fields
     class Config:
         from_attributes = True
 
-class JobsTaskListSchema(BaseModel):
-    """Lightweight schema for list views"""
-    # JobsTasks fields
-    id: int
-    task_no: int
-    job_no: int
+class JobsTaskListSchema(JobSchema):
+    """JobsTask list schema that inherits from JobSchema"""
+
+    task_no: Optional[int] = None
     rsrc_no: Optional[int] = None
     
-    
-    job: Optional[JobSchema] = None
-    case: Optional[CaseListSchema] = None
-    resource: Optional[ResourceResponseSchema] = None
-    witness_videos_status: Optional[Dict[str, str]] = None
 
     class Config:
         from_attributes = True

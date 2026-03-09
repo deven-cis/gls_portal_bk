@@ -23,7 +23,7 @@ from src.jobs.apis import (
 )
 from src.jobs.schema import CancelJobSchema
 
-jobs_apis = APIRouter(prefix='/jobs', tags=['jobs'])
+jobs_apis = APIRouter(prefix='/jobstasks', tags=['jobstasks'])
 
 
 @jobs_apis.get('/get/{job_no}/cancelled_details', status_code=200)

@@ -14,7 +14,6 @@ from src.core.sync.validation_utils import (
     check_email_uniqueness
 )
 from src.job_assignment.models import JobAssignment
-from src.users.models import Users
 from src.core.sync.synchronization_configuration import SYNC_ORDER
 from src.resources.models import Resources
 from src.resources.utils import hash_password

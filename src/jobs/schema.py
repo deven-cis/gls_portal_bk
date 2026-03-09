@@ -86,10 +86,11 @@ class CalendarEventSchema(BaseModel):
     videosUploaded: Optional[int] = None
     totalVideos: Optional[int] = None
     deadline: Optional[datetime] = None
-    type: str = "deposition"
+    type: Optional[str] = None
     hasVideo: bool = False
     witness_videos_status: Optional[Dict[str, str]] = None  
-
+    rsrc_type: Optional[str] = None
+    
     class Config:
         from_attributes = True
     

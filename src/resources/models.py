@@ -5,6 +5,9 @@ from src.core.models import Base
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 import enum
 
+# Import JobsTasks for relationship
+from src.jobs_tasks.models import JobsTasks
+
 
 class Resources(Base):
     __tablename__ = "resources"   

@@ -14,7 +14,6 @@ from src.core.sync.validation_utils import (
     check_email_uniqueness
 )
 from src.job_assignment.models import JobAssignment
-from src.users.models import Users
 from src.users.utils import hash_password
 from src.core.email_service import generate_temporary_password, send_user_welcome_notification
 

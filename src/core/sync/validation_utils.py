@@ -62,22 +62,22 @@ def validate_string_length(value: str, max_length: int, field_name: str) -> Tupl
     return True, None
 
 
-def check_email_uniqueness(db: Session, email: str, exclude_user_no: Optional[int] = None) -> Tuple[bool, Optional[str]]:
+def check_email_uniqueness(db: Session, email: str, exclude_rsrc_no: Optional[int] = None) -> Tuple[bool, Optional[str]]:
     if not email:
         return False, "Email is required"
     
     try:
-        from src.users.models import Users
-        
-        query = db.query(Users).filter(Users.email == email.strip().lower())
-        
-        if exclude_user_no is not None:
-            query = query.filter(Users.user_no != exclude_user_no)
-        
-        existing_user = query.first()
-        
-        if existing_user:
-            error_msg = f"Email '{email}' already exists (user_no={existing_user.user_no})"
+        from src.resources.models import Resources
+
+        query = db.query(Resources).filter(Resources.email == email.strip().lower())
+
+        if exclude_rsrc_no is not None:
+            query = query.filter(Resources.rsrc_no != exclude_rsrc_no)
+
+        existing_resource = query.first()
+
+        if existing_resource:
+            error_msg = f"Email '{email}' already exists (rsrc_no={existing_resource.rsrc_no})"
             logger.warning(f"[VALIDATION] {error_msg}")
             return False, error_msg
         

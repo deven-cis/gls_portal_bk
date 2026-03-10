@@ -20,7 +20,6 @@ class Rb9ToNewGlsSynchronizationService:
     # Table-specific fields that should never be updated during sync
     TABLE_UPDATE_EXCLUDE_FIELDS = {
         'Cases': ['case_number', 'case_short_name', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
-        'Users': ['login_password', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
         'Resources': ['login_password', 'entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
         'Jobs': ['entered_at', 'entered_by', 'last_modified_at', 'last_modified_by'],
         'JobsTasks': ['entered_at', 'entered_by', 'last_modified_at', 'last_modified_by']

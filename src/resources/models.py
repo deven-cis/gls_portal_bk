@@ -26,7 +26,7 @@ class Resources(Base):
     alt_phone = Column(String(50), nullable=True)
     fax = Column(Text, nullable=True)
     mobile = Column(String(50), nullable=True)
-    sms_provide_no = Column(Integer, nullable=True)
+    sms_provider_no = Column(Integer, nullable=True)
 
     # Auth
     login_name = Column(String(150), index=True, nullable=True)
@@ -43,7 +43,7 @@ class Resources(Base):
     session_id = Column(String(255), nullable=True)
 
     # Address
-    salutaion = Column(String(1024), nullable=True) 
+    salutation = Column(String(1024), nullable=True) 
     address = Column(String(1024), nullable=True)
     city = Column(String(100), nullable=True)
     state = Column(String(50), nullable=True)
@@ -75,7 +75,6 @@ class Resources(Base):
     work_schedule_wed = Column(String(1024), nullable=True)
     work_schedule_thu = Column(String(1024), nullable=True)
     work_schedule_fri = Column(String(1024), nullable=True)
-    work_schedule_sta = Column(String(1024), nullable=True)
-    
+    work_schedule_sat = Column(String(1024), nullable=True)
     
     tasks = relationship("JobsTasks", back_populates="rsrc")

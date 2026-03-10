@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict, Any, Optional
+import csv
 
 from sqlalchemy.orm import Session
 
@@ -9,9 +10,7 @@ from src.core.database import SessionLocal
 from src.core.timezone_utils import get_timezone_now
 from src.core.sync.synchronization_configuration import get_table_config_stage2
 from src.core.sync.validation_utils import (
-    validate_email_format,
     normalize_string,
-    check_email_uniqueness
 )
 from src.job_assignment.models import JobAssignment
 from src.core.sync.synchronization_configuration import SYNC_ORDER
@@ -149,8 +148,19 @@ class ResourceOnboardingSynchronizationService:
                         
                         mapped_record = self._transform_field_names(rb9_record, field_mapping)
                         
-                        # Normalize string fields dynamically
-                        string_fields = ['name', 'login_name']
+                        # Normalize key string fields dynamically
+                        string_fields = [
+                            'full_name',
+                            'first_name',
+                            'middle_name',
+                            'last_name',
+                            'login_name',
+                            'email',
+                            'city',
+                            'state',
+                            'country',
+                            'address',
+                        ]
                         for field in string_fields:
                             if field in mapped_record and isinstance(mapped_record[field], str):
                                 mapped_record[field] = normalize_string(mapped_record[field])
@@ -162,6 +172,7 @@ class ResourceOnboardingSynchronizationService:
                             changes = self._detect_field_changes(existing_resource, mapped_record)
                             
                             if changes:
+                                changed_fields = []
                                 for field, value in changes.items():
                                     # Skip fields that should never be updated
                                     if field in self.UPDATE_EXCLUDE_FIELDS:
@@ -219,6 +230,8 @@ class ResourceOnboardingSynchronizationService:
                                 continue
                             
                             # Build resource data dynamically from mapped record
+                            # Start with required/core fields, then copy all other mapped fields
+                            # that exist on the Resources model.
                             resource_data = {
                                 'rsrc_no': rsrc_no,
                                 'login_password': hashed_password,
@@ -226,12 +239,16 @@ class ResourceOnboardingSynchronizationService:
                                 'last_modified_by': mapped_record.get('last_modified_by', 0),
                                 'is_active': mapped_record.get('is_active', False),
                             }
-                            
-                            # Add optional fields if they exist in mapped record
-                            optional_fields = ['name', 'login_name', 'entered_at', 'last_modified_at']
-                            for field in optional_fields:
-                                if field in mapped_record and mapped_record[field] is not None:
-                                    resource_data[field] = mapped_record[field]
+
+                            for field, value in mapped_record.items():
+                                # Skip fields we already set explicitly
+                                if field in resource_data:
+                                    continue
+                                if value is None:
+                                    continue
+                                # Only include fields that actually exist on the Resources model
+                                if hasattr(Resources, field):
+                                    resource_data[field] = value
                             
                             new_resource = Resources(**resource_data)
                             
@@ -244,7 +261,7 @@ class ResourceOnboardingSynchronizationService:
                             self.stats['inserted'] += 1
                             logger.info(
                                 f"[SUCCESS] Created new Resource rsrc_no={rsrc_no}, "
-                                f"name={resource_data.get('name', 'N/A')}"
+                                f"name={resource_data.get('full_name', 'N/A')}"
                             )
                             
                             # DEVELOPMENT MODE: Skip email sending
@@ -337,4 +354,3 @@ class ResourceOnboardingSynchronizationService:
                 pass
         
         return self.stats
-

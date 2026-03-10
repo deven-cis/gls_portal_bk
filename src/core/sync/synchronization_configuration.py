@@ -2,7 +2,6 @@ from typing import Dict, Any, List
 
 # Dependency order for syncing tables (must sync in this order)
 SYNC_ORDER = [
-    'Users',
     'Resources',
     'Cases',
     'Jobs',
@@ -12,53 +11,11 @@ SYNC_ORDER = [
 
 # Table configurations for Stage 2 (rb9_db → new_gls_db)
 STAGE2_TABLE_CONFIG = {
-    'Users': {
-        'table_name': 'Users',
-        'rb9_table': 'Users',
-        'unique_field': 'user_no',
-        'rb9_unique_field': 'UserNo',
-        'query': '''
-            SELECT 
-                "UserNo",
-                "PersonNo",
-                "FullName",
-                "FirstName",
-                "MiddleName",
-                "LastName",
-                "LoginName",
-                "Email",
-                "IsActive",
-                "LastModified",
-                "LastModifiedBy",
-                "Entered",
-                "EnteredBy",
-                "CreatedAtRb",
-                "UpdatedAtRb"
-            FROM "Users"
-        ''',
-        'field_mapping': {
-            'UserNo': 'user_no',
-            'PersonNo': 'person_no',
-            'FullName': 'full_name',
-            'FirstName': 'first_name',
-            'MiddleName': 'middle_name',
-            'LastName': 'last_name',
-            'LoginName': 'login_name',
-            'Email': 'email',
-            'IsActive': 'is_active',
-            'LastModified': 'last_modified_at',
-            'LastModifiedBy': 'last_modified_by',
-            'Entered': 'entered_at',
-            'EnteredBy': 'entered_by'
-        },
-        'date_field': 'LastModified',
-        'model_class': 'Users'
-    },
     'Resources': {
     'table_name': 'Resources',
     'rb9_table': 'Resources',
     'unique_field': 'rsrc_no',
-    'rb9_unique_field': 'ResourceNo',
+    'rb9_unique_field': 'RsrcNo',
     'query': '''
         SELECT 
             r."RsrcNo",
@@ -77,8 +34,6 @@ STAGE2_TABLE_CONFIG = {
             r."IsActive",
             r."IsLocked",
             r."TryLoginCnt",
-            r."LastLogin",
-            r."BirthDate",
             r."LastPwdChanged",
             r."SessionId",
             r."Address",
@@ -141,8 +96,6 @@ STAGE2_TABLE_CONFIG = {
         'IsActive': 'is_active',
         'IsLocked': 'is_locked',
         'TryLoginCnt': 'try_login_cnt',
-        'LastLogin': 'last_login',
-        'BirthDate': 'birth_date',
         'LastPwdChanged': 'last_pwd_changed',
         'SessionId': 'session_id',
         'Salutation': 'salutation',

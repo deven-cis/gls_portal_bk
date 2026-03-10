@@ -50,7 +50,7 @@ async def login_user(data: LoginCredentialSchema):
         token_data = create_access_token({
             'login_name': rsrc_obj.email,
             'rsrc_no': rsrc_obj.rsrc_no,
-            'entered_by': getattr(rsrc_obj, 'entered_by', None)
+            'rsrc_role': rsrc_obj.priority_level
         })
         
         resource_response = {   
@@ -58,9 +58,7 @@ async def login_user(data: LoginCredentialSchema):
             'full_name': rsrc_obj.full_name or '',
             'email': rsrc_obj.email or '',
             'login_name': rsrc_obj.login_name or '',
-            'require_password_change': bool(getattr(rsrc_obj, 'require_password_change', False)),
-            'entered_by': getattr(rsrc_obj, 'entered_by', None),
-            'last_modified_by': getattr(rsrc_obj, 'last_modified_by', None)
+            'rsrc_role': rsrc_obj.priority_level
         }
         
         response = {
@@ -124,7 +122,7 @@ async def refresh_token(data: RefreshTokenSchema):
         token_data = {
             'login_name': rsrc.email,
             'rsrc_no': rsrc.rsrc_no,
-            'entered_by': getattr(rsrc, 'entered_by', None)
+            'rsrc_role': rsrc.priority_level
         }
         
         new_tokens = create_access_token(token_data)
@@ -134,9 +132,7 @@ async def refresh_token(data: RefreshTokenSchema):
             'full_name': rsrc.full_name or '',
             'email': rsrc.email or '',
             'login_name': rsrc.login_name or '',
-            'require_password_change': bool(getattr(rsrc, 'require_password_change', False)),
-            'entered_by': getattr(rsrc, 'entered_by', None),
-            'last_modified_by': getattr(rsrc, 'last_modified_by', None)
+            'rsrc_role': rsrc.priority_level
         }
         
         response = {

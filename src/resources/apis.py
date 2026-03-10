@@ -144,10 +144,10 @@ async def remove_profile_picture(rsrc_no: int, db: Session) -> JSONResponse:
 
 
 async def change_password(schema: PasswordChangeSchema, rsrc_no: int, db: Session) -> JSONResponse:
-    rsrc_no_from_context = get_context("rsrc_no")
+    current_rsrc_no = get_context("rsrc_no")
     now = get_timezone_now()
     try:
-        if schema.user_id != rsrc_no:
+        if schema.rsrc_no != rsrc_no:
             logger.info("change password attempt failed - resource id mismatch")
             return JSONResponse(
                 content={
@@ -158,7 +158,7 @@ async def change_password(schema: PasswordChangeSchema, rsrc_no: int, db: Sessio
                 status_code=status.HTTP_200_OK,
             )
 
-        resource = db.query(Resources).filter(Resources.rsrc_no == schema.user_id, ~Resources.is_archived).first()
+        resource = db.query(Resources).filter(Resources.rsrc_no == schema.rsrc_no, ~Resources.is_archived).first()
         if not resource:
             logger.info(f"resource not found for resource")
             return JSONResponse(
@@ -184,10 +184,10 @@ async def change_password(schema: PasswordChangeSchema, rsrc_no: int, db: Sessio
         resource.login_password = hash_password(schema.new_password)
         resource.require_password_change = False
         resource.last_modified_at = now
-        resource.last_modified_by = rsrc_no_from_context
+        resource.last_modified_by = current_rsrc_no
         db.commit()
         logger.info(
-            f"change password success for resource: {resource.email} (ID: {resource.id})"
+            f"change password success for resource: {resource.email} (ID: {resource.rsrc_no})"
         )
         return JSONResponse(
             content={
@@ -214,7 +214,7 @@ async def change_password(schema: PasswordChangeSchema, rsrc_no: int, db: Sessio
 async def assignee_users_list(db: Session) -> JSONResponse:
     
     try:
-        list_of_resources = db.query(Resources).filter(Resources.is_archived == False).all()
+        list_of_resources = db.query(Resources).filter(Resources.is_archived == False, Resources.is_active == True).all()
         list_of_resources_data = [
             ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
             for resource in list_of_resources

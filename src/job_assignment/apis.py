@@ -6,95 +6,130 @@ from src.core.logger import logger
 from src.job_assignment.models import JobAssignment
 from src.job_assignment.schema import JobReassignRequestSchema
 from src.jobs.models import Jobs
-from src.witnesses.models import Witnesses
-from src.witness_videos.models import WitnessVideos
-from src.attorneys.models import Attorneys
-from src.billings.models import Billings
-from src.equipment_time.models import EquipmentTime
-from src.additional_documents.models import AdditionalDocuments
+from src.resources.models import Resources
+from src.jobs_tasks.models import JobsTasks
+from src.cases.models import Cases
 from src.core.context import get_context
 from src.jobs.models import JobStatusEnum
 from src.core.timezone_utils import get_timezone_now
 
+
 async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -> JSONResponse:
     try:
-        entered_by = get_context("entered_by")
+        current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        current_user_id = get_context('user_id')
-        current_user_no = entered_by
-        
-        assignee_user_id = payload.assignee_user_id
         job_no = payload.job_id
-        
-        logger.info(
-            f"Reassigning job {job_no}: "
-            f"from user_id={current_user_id} (user_no={current_user_no}) "
-            f"to user_id={assignee_user_id}"
+        assignee_rsrc_no = payload.assignee_rsrc_no
+
+        logger.info(f"Reassigning job {job_no} from rsrc {current_rsrc_no} to rsrc {assignee_rsrc_no}")
+
+        # Validate job exists and current resource has access
+        job = (
+            db.query(Jobs)
+            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+            .join(Cases, Cases.case_no == Jobs.case_no)
+            .filter(
+                Jobs.job_no == job_no,
+                Jobs.is_archived == False,
+                Cases.is_archived == False,
+                JobsTasks.rsrc_no == current_rsrc_no,
+                JobsTasks.is_archived == False
+            )
+            .first()
         )
 
-        job = db.query(Jobs).filter(
-            Jobs.job_no == job_no,
-            Jobs.entered_by == current_user_no,
-            Jobs.is_archived == False
-        ).first()
-
         if not job:
-            logger.warning(f"Job {job_no} not found or access denied for user {current_user_no}")
+            logger.warning(f"Job {job_no} not found or access denied for rsrc {current_rsrc_no}")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": "Job not found or you don't have permission to reassign it",
+                    "message": "Job not found or access denied",
                     "success": False,
                     "result": {}
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        assignee_user = db.query(Users).filter(
-            Users.id == assignee_user_id,
-            Users.is_archived == False
-        ).first()
+        # Validate assignee resource exists
+        assignee = (
+            db.query(Resources.rsrc_no)
+            .filter(
+                Resources.rsrc_no == assignee_rsrc_no,
+                Resources.is_archived == False
+            )
+            .first()
+        )
 
-        if not assignee_user:
-            logger.warning(f"Assignee user {assignee_user_id} not found")
+        if not assignee:
+            logger.warning(f"Assignee resource {assignee_rsrc_no} not found")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": "Assignee user not found",
+                    "message": "Assignee resource not found",
                     "success": False,
                     "result": {}
                 },
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
-        assignee_user_no = assignee_user.user_no
-            
+
+        # Archive existing assignments for any active tasks under this job
         db.execute(
             update(JobAssignment)
             .where(
-                JobAssignment.job_no == job_no,
-                JobAssignment.is_archived == False
+                JobAssignment.job_task_no.in_(
+                    db.query(JobsTasks.task_no).filter(
+                        JobsTasks.job_no == job_no,
+                        JobsTasks.is_archived == False,
+                    )
+                ),
+                JobAssignment.is_archived == False,
             )
             .values(
                 is_archived=True,
-                last_modified_by=current_user_id,
-                last_modified_at=now
+                last_modified_by=current_rsrc_no,
+                last_modified_at=now,
             )
         )
-        
+
+        # Find a primary active task for this job to record in JobAssignment
+        primary_task = (
+            db.query(JobsTasks)
+            .filter(
+                JobsTasks.job_no == job_no,
+                JobsTasks.is_archived == False,
+            )
+            .order_by(JobsTasks.task_no.asc())
+            .first()
+        )
+
+        if not primary_task:
+            logger.warning(f"No active tasks found for job {job_no} to assign")
+            db.rollback()
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "No active tasks found for job",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Create new assignment at task level, tracked by job_no context
         assignment = JobAssignment(
-            assigner_id=current_user_id,
-            assignee_id=assignee_user_id,
-            job_no=job_no,
+            assigner_id=current_rsrc_no,
+            assignee_id=assignee_rsrc_no,
+            job_task_no=primary_task.task_no,
             case_no=job.case_no,
             reason=payload.reason,
-            entered_by=current_user_id,
-            last_modified_by=current_user_id,
+            entered_by=current_rsrc_no,
+            last_modified_by=current_rsrc_no,
             last_modified_at=now,
-            entered_at=now
+            entered_at=now,
         )
         db.add(assignment)
-        
+
+        # Reset job status
         db.execute(
             update(Jobs)
             .where(
@@ -107,43 +142,30 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
                 actual_session_end_time=None,
                 session_duration=None,
                 session_completed=False,
-                entered_by=assignee_user_no,
-                last_modified_by=assignee_user_no,
+                last_modified_by=current_rsrc_no,
                 last_modified_at=now
             )
         )
-        
-        related_models = [
-            Witnesses,
-            WitnessVideos,
-            Attorneys,
-            Billings,
-            EquipmentTime,
-            AdditionalDocuments
-        ]
-        
-        for model in related_models:
-            db.execute(
-                update(model)
-                .where(
-                    model.job_no == job_no,
-                    model.is_archived == False
-                )
-                .values(
-                    entered_by=assignee_user_no,
-                    last_modified_by=assignee_user_no,
-                    last_modified_at=now
-                )
+
+        # Update JobsTasks rsrc_no to new assignee
+        db.execute(
+            update(JobsTasks)
+            .where(
+                JobsTasks.job_no == job_no,
+                JobsTasks.is_archived == False
             )
-        
+            .values(
+                rsrc_no=assignee_rsrc_no,
+                last_modified_by=current_rsrc_no,
+                last_modified_at=now
+            )
+        )
+
         db.commit()
         db.refresh(assignment)
-        
-        logger.info(
-            f"Job {job_no} successfully reassigned "
-            f"from user_no {current_user_no} to user_no {assignee_user_no}"
-        )
-        
+
+        logger.info(f"Job {job_no} successfully reassigned from rsrc {current_rsrc_no} to rsrc {assignee_rsrc_no}")
+
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -151,14 +173,14 @@ async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -
                 "success": True,
                 "result": {
                     "job_no": job_no,
-                    "previous_owner": current_user_no,
-                    "new_owner": assignee_user_no,
+                    "previous_owner": current_rsrc_no,
+                    "new_owner": assignee_rsrc_no,
                     "assignment_id": assignment.id
                 }
             },
             status_code=status.HTTP_200_OK
         )
-        
+
     except Exception as e:
         db.rollback()
         logger.error(f"Error reassigning job {payload.job_id}: {str(e)}", exc_info=True)

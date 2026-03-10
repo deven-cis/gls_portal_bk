@@ -33,7 +33,7 @@ class LogoutResponseSchema(BaseModel):
 
 
 class PasswordChangeSchema(BaseModel):
-    user_id: int
+    rsrc_no: int
     old_password: str
     new_password: str
 

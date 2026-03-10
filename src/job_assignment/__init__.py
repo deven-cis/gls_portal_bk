@@ -6,7 +6,7 @@ from src.core.database import get_db
 from src.job_assignment.apis import reassign_job_service
 from src.job_assignment.schema import JobReassignRequestSchema
 
-job_assignment_apis = APIRouter(prefix='/jobs', tags=['jobs'])
+job_assignment_apis = APIRouter(prefix='/jobassignment', tags=['jobassignment'])
 
 
 @job_assignment_apis.post("/reassign", status_code=200)

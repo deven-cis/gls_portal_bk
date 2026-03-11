@@ -1,6 +1,5 @@
-from sqlalchemy import Column, Integer, ForeignKey, DateTime, String, Text
+from sqlalchemy import Column, Integer, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from src.core.models import Base
 
 
@@ -21,28 +20,24 @@ class JobAssignment(Base):
     # Reason for reassignment (from the confirmation dialog)
     reason = Column(Text, nullable=True)
 
-    # Relationships - using back_populates for explicit bidirectional relationships
+    # Relationships
     assigner = relationship(
         "Resources",
         foreign_keys=[assigner_id],
         backref="job_assignments_assigned_by_me"
     )
-
     assignee = relationship(
         "Resources",
         foreign_keys=[assignee_id],
         backref="job_assignments_assigned_to_me"
     )
-
     job_task = relationship(
         "JobsTasks",
         foreign_keys=[job_task_no],
         primaryjoin="JobAssignment.job_task_no == JobsTasks.task_no",
         backref="assignments"
     )
-
     case = relationship(
         "Cases",
         backref="job_assignments"
     )
-    

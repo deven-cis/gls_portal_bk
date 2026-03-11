@@ -1,8 +1,6 @@
-from sqlalchemy import Column, ForeignKey, Time, Integer, Text, Boolean, String
-
-from src.core.models import Base
+from sqlalchemy import Column, ForeignKey, Integer, Text, Boolean, String
 from sqlalchemy.orm import relationship
-
+from src.core.models import Base
 
 
 class Billings(Base):
@@ -17,9 +15,7 @@ class Billings(Base):
     camera_captured_file_name = Column(Text, nullable=True)
     camera_captured_file_path = Column(Text, nullable=True)
 
-    # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="billing")
-
     additional_documents = relationship(
         "AdditionalDocuments",
         back_populates="billing",

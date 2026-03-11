@@ -130,7 +130,8 @@ STAGE2_TABLE_CONFIG = {
         'EnteredBy':            'entered_by',
     },
     'date_field': 'LastModified',
-    'model_class': 'Resources'
+    'model_class': 'Resources',
+    'date_field_table_alias': 'r',
 
     },
     'Cases': {

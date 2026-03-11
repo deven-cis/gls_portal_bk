@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -11,8 +11,10 @@ from src.core.sync.synchronization_configuration import get_table_config_stage2
 from src.core.sync.validation_utils import (
     normalize_string,
 )
-from src.resources.models import Resources
 from src.resources.utils import hash_password
+
+if TYPE_CHECKING:
+    from src.resources.models import Resources
 
 
 class ResourceOnboardingSynchronizationService:
@@ -43,12 +45,14 @@ class ResourceOnboardingSynchronizationService:
                 mapped_record[new_gls_field] = rb9_record[rb9_field]
         return mapped_record
     
-    def _find_existing_resource(self, db: Session, rsrc_no: int) -> Optional[Resources]:
+    def _find_existing_resource(self, db: Session, rsrc_no: int) -> Optional['Resources']:
+        from src.resources.models import Resources  # Lazy import
+        
         return db.query(Resources).filter(Resources.rsrc_no == rsrc_no).first()
     
     def _detect_field_changes(
         self,
-        existing_resource: Resources,
+        existing_resource: 'Resources',
         mapped_record: Dict[str, Any],
         exclude_fields: list = None
     ) -> Dict[str, Any]:
@@ -79,6 +83,9 @@ class ResourceOnboardingSynchronizationService:
         end_date: Optional[datetime] = None,
         limit: Optional[int] = None
     ) -> Dict[str, int]:
+        # Lazy import to prevent circular import
+        from src.resources.models import Resources
+        
         self.stats = {'inserted': 0, 'updated': 0, 'errors': 0, 'skipped': 0, 'emails_sent': 0}
         
         config_data = get_table_config_stage2('Resources')
@@ -91,19 +98,21 @@ class ResourceOnboardingSynchronizationService:
         query = config_data['query']
         date_field = config_data['date_field']
         field_mapping = config_data['field_mapping']
+        date_field_table_alias = config_data.get('date_field_table_alias')
         
         try:
             logger.info("Starting Stage 1 Resources sync from rb9_db to new_gls_db")
             
             params = {}
             where_clauses = []
+            date_field_qualified = f'{date_field_table_alias}."{date_field}"' if date_field_table_alias else f'"{date_field}"'
             
             if start_date:
-                where_clauses.append(f'"{date_field}" >= :start_date')
+                where_clauses.append(f'{date_field_qualified} >= :start_date')
                 params['start_date'] = start_date
             
             if end_date:
-                where_clauses.append(f'"{date_field}" <= :end_date')
+                where_clauses.append(f'{date_field_qualified} <= :end_date')
                 params['end_date'] = end_date
             
             if where_clauses:

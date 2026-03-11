@@ -1,9 +1,7 @@
-from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger, ForeignKey, Boolean, Date, Numeric, LargeBinary
+from sqlalchemy import Column, DateTime, Date, Integer, String, ForeignKey
 from sqlalchemy.types import Text
 from sqlalchemy.orm import relationship
 from src.core.models import Base
-from sqlalchemy.dialects.postgresql import ENUM as PgEnum
-import enum
 
 
 class JobsTasks(Base):
@@ -28,14 +26,9 @@ class JobsTasks(Base):
     # Relationships
     job = relationship(
         "Jobs",
-        foreign_keys=[job_no],
-        primaryjoin="JobsTasks.job_no == Jobs.job_no",
         back_populates="tasks"
     )
-
     rsrc = relationship(
         "Resources",
-        foreign_keys=[rsrc_no],
-        primaryjoin="JobsTasks.rsrc_no == Resources.rsrc_no",
         back_populates="tasks"
     )

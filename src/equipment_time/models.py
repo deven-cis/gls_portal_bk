@@ -16,9 +16,8 @@ class EquipmentTime(Base):
     camera_captured_file_name = Column(Text, nullable=True)
     camera_captured_file_path = Column(Text, nullable=True)
 
-    # Define the relationship to the Jobs model
     job = relationship("Jobs", back_populates="equipment_time")
-    
+
     additional_documents = relationship(
         "AdditionalDocuments",
         back_populates="equipment_time",

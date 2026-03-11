@@ -4,7 +4,6 @@ from sqlalchemy.orm import relationship
 from src.core.models import Base
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 import enum
-from src.job_assignment.models import JobAssignment
 
 class CancelReasonEnum(enum.Enum):
     HEARING_RESCHEDULED = "Hearing rescheduled"
@@ -70,52 +69,45 @@ class Jobs(Base):
     )
 
     case = relationship(
-        "src.cases.models.Cases",
+        "Cases",
         back_populates="jobs",
-        lazy="joined",
+        lazy="joined"
     )
-    
-    # One-to-many: each job can have multiple attorneys
+
     attorneys = relationship(
         "Attorneys",
         back_populates="job",
         cascade="all, delete-orphan"
     )
-    
-    # One-to-one relationship with Billings
+
     billing = relationship(
         "Billings",
         back_populates="job",
         uselist=False,
         cascade="all, delete-orphan"
     )
-    
-    # One-to-many relationship with AdditionalDocuments
+
     additional_documents = relationship(
         "AdditionalDocuments",
         back_populates="job",
         cascade="all, delete-orphan"
     )
-    
-    # One-to-one relationship with EquipmentTime
+
     equipment_time = relationship(
         "EquipmentTime",
         back_populates="job",
         uselist=False,
         cascade="all, delete-orphan"
     )
-    
-    # One-to-many relationship with Witnesses
+
     witnesses = relationship(
         "Witnesses",
         back_populates="job",
         cascade="all, delete-orphan"
     )
-    
-    # One-to-many relationship with JobsTasks
+
     tasks = relationship(
         "JobsTasks",
         back_populates="job",
         cascade="all, delete-orphan"
     )
-    

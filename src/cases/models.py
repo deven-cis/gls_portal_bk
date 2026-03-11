@@ -1,6 +1,5 @@
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Float
+from sqlalchemy import Column, String, DateTime, Integer
 from sqlalchemy.orm import relationship
-
 from src.core.models import Base
 
 
@@ -17,5 +16,5 @@ class Cases(Base):
     jobs = relationship(
         "Jobs",
         back_populates="case",
-        lazy="select",
+        lazy="select"
     )

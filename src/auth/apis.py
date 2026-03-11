@@ -4,7 +4,6 @@ from fastapi.exceptions import HTTPException
 from fastapi import status
 from jose import JWTError
 from src.auth.schema import LoginCredentialSchema
-from src.resources.models import Resources
 from src.resources.utils import verify_password
 from src.core.logger import logger
 from src.auth.utils import create_access_token, decode_token
@@ -20,6 +19,9 @@ from fastapi.responses import JSONResponse
 
 async def login_user(data: LoginCredentialSchema):
     try:
+        # Lazy import to prevent circular import
+        from src.resources.models import Resources
+        
         logger.info(f"Login attempt for resource: {data.login_name}")
         
         resources = Resources.fetch_records({"email": data.login_name})
@@ -94,6 +96,9 @@ async def login_user(data: LoginCredentialSchema):
 
 async def refresh_token(data: RefreshTokenSchema):
     try:
+        # Lazy import to prevent circular import
+        from src.resources.models import Resources
+        
         payload = decode_token(data.refresh_token)
         
         if payload.get('type') != 'refresh':
@@ -187,6 +192,9 @@ async def refresh_token(data: RefreshTokenSchema):
 
 async def forget_password(email: EmailStr):
     try:
+        # Lazy import to prevent circular import
+        from src.resources.models import Resources
+        
         logger.info(f"Password reset request for email: {email}")
         resources = Resources.fetch_records({"email": email})
  
@@ -229,6 +237,9 @@ async def reset_password(
     schema: PasswordResetSchema
 ):
     try:
+        # Lazy import to prevent circular import
+        from src.resources.models import Resources
+        
         decoded_data = verify_token(schema.token)
         rsrc = Resources.get(decoded_data.get('rsrc_no'))
         

@@ -5,17 +5,18 @@ from sqlalchemy import update
 from src.core.logger import logger
 from src.job_assignment.models import JobAssignment
 from src.job_assignment.schema import JobReassignRequestSchema
-from src.jobs.models import Jobs
 from src.resources.models import Resources
 from src.jobs_tasks.models import JobsTasks
 from src.cases.models import Cases
 from src.core.context import get_context
-from src.jobs.models import JobStatusEnum
 from src.core.timezone_utils import get_timezone_now
 
 
 async def reassign_job_service(payload: JobReassignRequestSchema, db: Session) -> JSONResponse:
     try:
+        # Lazy imports to prevent circular imports
+        from src.jobs.models import Jobs, JobStatusEnum
+        
         current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
         job_no = payload.job_id

@@ -1,12 +1,7 @@
-from sqlalchemy import Column, DateTime, Time, Integer, String, BigInteger, ForeignKey, Boolean, Date, Numeric, LargeBinary
+from sqlalchemy import Column, DateTime, Integer, String, Boolean, Date, Numeric, LargeBinary
 from sqlalchemy.types import Text
 from sqlalchemy.orm import relationship
 from src.core.models import Base
-from sqlalchemy.dialects.postgresql import ENUM as PgEnum
-import enum
-
-# Import JobsTasks for relationship
-from src.jobs_tasks.models import JobsTasks
 
 
 class Resources(Base):

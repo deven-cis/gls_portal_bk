@@ -28,7 +28,6 @@ STAGE2_TABLE_CONFIG = {
             r."AltPhone",
             r."Fax",
             r."Mobile",
-            r."SMSProviderNo",
             r."LoginName",
             r."Email",
             r."IsActive",
@@ -72,7 +71,7 @@ STAGE2_TABLE_CONFIG = {
             l_pay_rate."ListValue"    AS "PayRateGroup",
             l_pay_group."ListValue"   AS "PayGroup"
         FROM "Resources" r
-        LEFT JOIN "Lists" l_salutation  ON r."Salutaion"     = l_salutation."ListNo"
+        LEFT JOIN "Lists" l_salutation  ON r."Salutation"     = l_salutation."ListNo"
         LEFT JOIN "Lists" l_rsrc_type   ON r."RsrcType"      = l_rsrc_type."ListNo"
         LEFT JOIN "Lists" l_priority    ON r."PriorityLevel" = l_priority."ListNo"
         LEFT JOIN "Lists" l_pay_rate    ON r."PayRateGroup"  = l_pay_rate."ListNo"
@@ -89,7 +88,6 @@ STAGE2_TABLE_CONFIG = {
         'AltPhone':             'alt_phone',
         'Fax':                  'fax',
         'Mobile':               'mobile',
-        'SMSProviderNo':        'sms_provider_no',
         'LoginName':            'login_name',
         'Email':                'email',
         'IsActive':             'is_active',

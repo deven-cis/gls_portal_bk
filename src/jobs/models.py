@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship
 from src.core.models import Base
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 import enum
+from src.job_assignment.models import JobAssignment
 
 class CancelReasonEnum(enum.Enum):
     HEARING_RESCHEDULED = "Hearing rescheduled"

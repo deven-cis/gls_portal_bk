@@ -14,14 +14,10 @@ from src.core.logger import logger
 from src.cases.models import Cases
 from src.core.context import get_context
 from src.jobs_tasks.schema import (
-    JobsTaskSchema, 
     JobsTaskCancelSchema, 
-    JobsTaskDetailsSchema, 
     MarkJobsTaskAsDoneSchema,
     JobsTaskListSchema,
-    JobsTaskCalendarSchema,
     JobsTaskCancelledAndCompletedSchema,
-    JobsTaskCompletedDetailsSchema
 )
 from src.jobs.models import JobStatusEnum, CancelReasonEnum
 from src.jobs_tasks.utils import (

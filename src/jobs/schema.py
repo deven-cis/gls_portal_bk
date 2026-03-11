@@ -1,11 +1,13 @@
 from datetime import datetime, time
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, TYPE_CHECKING
 
 from pydantic import BaseModel
 from src.cases.schema import CaseListSchema
 from src.jobs.models import CancelReasonEnum, JobStatusEnum
-from src.witnesses.schema import WitnessSchema
-from src.attorneys.schema import AttorneySchema
+
+if TYPE_CHECKING:
+    from src.witnesses.schema import WitnessSchema
+    from src.attorneys.schema import AttorneySchema
 
 class JobSchema(BaseModel):
     id: int
@@ -67,8 +69,8 @@ class CompletedJobDetailsSchema(BaseModel):
     job_loc_zip: Optional[str] = None
     case: Optional[CaseListSchema] = None
     computed_status: Optional[str] = None
-    witnesses: List[WitnessSchema] = []
-    attorneys: List[AttorneySchema] = []
+    witnesses: List['WitnessSchema'] = []
+    attorneys: List['AttorneySchema'] = []
 
     class Config:
         from_attributes = True

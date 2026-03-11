@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Dict, Any, Optional
-import csv
 
 from sqlalchemy.orm import Session
 
@@ -12,11 +11,8 @@ from src.core.sync.synchronization_configuration import get_table_config_stage2
 from src.core.sync.validation_utils import (
     normalize_string,
 )
-from src.job_assignment.models import JobAssignment
-from src.core.sync.synchronization_configuration import SYNC_ORDER
 from src.resources.models import Resources
 from src.resources.utils import hash_password
-from src.core.email_service import generate_temporary_password, send_user_welcome_notification
 
 
 class ResourceOnboardingSynchronizationService:
@@ -141,6 +137,16 @@ class ResourceOnboardingSynchronizationService:
                         if not rsrc_no:
                             logger.warning(
                                 f"[SKIP] Resource record missing {unique_field}. Record: {rb9_record}"
+                            )
+                            self.stats['skipped'] += 1
+                            savepoint.rollback()
+                            continue
+
+                        try:
+                            rsrc_no = int(rsrc_no)
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                f"[SKIP] Resource record has invalid {unique_field}={rsrc_no!r}. Record: {rb9_record}"
                             )
                             self.stats['skipped'] += 1
                             savepoint.rollback()

@@ -501,7 +501,7 @@ async def list_pending_jobstasks(
 
         # No pagination
         if page is None or page_size is None:
-            jobstasks = base_query.order_by(Jobs.job_date.asc()).all()
+            jobstasks = base_query.order_by(Jobs.job_date.asc(), Jobs.start_time.asc()).all()
             jobstasks_data = attach_video_status(
                 [JobsTaskListSchema.model_validate(j).model_dump(mode='json') for j in jobstasks]
             )
@@ -521,7 +521,7 @@ async def list_pending_jobstasks(
         total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         jobstasks = (
             base_query
-            .order_by(Jobs.job_date.asc())
+            .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
@@ -1114,7 +1114,7 @@ async def cancelled_and_completed_jobstasks(
 
         jobstasks = (
             query
-            .order_by(Jobs.job_date.desc(), JobsTasks.task_no.desc())
+            .order_by(Jobs.job_date.asc(), Jobs.start_time.asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()

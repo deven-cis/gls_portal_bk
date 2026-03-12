@@ -60,13 +60,6 @@ class Jobs(Base):
     mark_is_done_billings = Column(Boolean, default=False, server_default='false')
     mark_is_done_equipment_time = Column(Boolean, default=False, server_default='false')
     
-    assignment_history = relationship(
-        "JobAssignment",
-        primaryjoin="Jobs.job_no == JobsTasks.job_no",
-        secondaryjoin="JobsTasks.task_no == JobAssignment.job_task_no",
-        secondary="jobs_tasks",
-        viewonly=True
-    )
 
     case = relationship(
         "Cases",

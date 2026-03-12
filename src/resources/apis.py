@@ -214,7 +214,7 @@ async def change_password(schema: PasswordChangeSchema, rsrc_no: int, db: Sessio
 async def assignee_users_list(db: Session) -> JSONResponse:
     
     try:
-        list_of_resources = db.query(Resources).filter(Resources.is_archived == False, Resources.is_active == True).all()
+        list_of_resources = db.query(Resources).filter(Resources.is_archived == False, Resources.is_active == True, Resources.rsrc_type == 'Videographer').all()
         list_of_resources_data = [
             ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
             for resource in list_of_resources

@@ -21,8 +21,7 @@ def update_job_statuses():
         
         # Check for jobs with empty or None computed_status
         jobs_count = session.query(Jobs).filter(
-            Jobs.job_date <= today,
-            (Jobs.computed_status == '') | (Jobs.computed_status.is_(None))
+            (Jobs.computed_status == 'upcoming') | (Jobs.computed_status.is_(None))
         ).count()
         
         if jobs_count == 0:
@@ -38,8 +37,7 @@ def update_job_statuses():
         logger.info(f"[Celery Task] Found {jobs_count} job(s) with job_date <= {today} and empty/None computed_status to update")
         
         updated_count = session.query(Jobs).filter(
-            Jobs.job_date <= today,
-            (Jobs.computed_status == '') | (Jobs.computed_status.is_(None))
+            (Jobs.computed_status == 'upcoming') | (Jobs.computed_status.is_(None))
         ).update(
             {Jobs.computed_status: JobStatusEnum.SESSION_NOT_STARTED.value},
             synchronize_session=False

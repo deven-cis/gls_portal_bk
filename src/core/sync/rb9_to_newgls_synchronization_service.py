@@ -13,6 +13,16 @@ from src.core.timezone_utils import get_timezone_now
 from src.core.sync.synchronization_configuration import get_sync_order, get_table_config_stage2
 from src.core.sync.resource_onboarding_synchronization_service import ResourceOnboardingSynchronizationService
 from src.core.sync.validation_utils import validate_date_range, normalize_string
+from src.resources.models import Resources
+from src.cases.models import Cases
+from src.billings.models import Billings
+from src.jobs_tasks.models import JobsTasks
+from src.jobs.models import Jobs
+from src.witnesses.models import Witnesses
+from src.witness_videos.models import WitnessVideos
+from src.additional_documents.models import AdditionalDocuments
+from src.equipment_time.models import EquipmentTime
+
 
 
 class Rb9ToNewGlsSynchronizationService:
@@ -46,20 +56,26 @@ class Rb9ToNewGlsSynchronizationService:
     
     def _resolve_model_class(self, model_class_name: str):
         try:
-            if model_class_name == 'Resources':
-                from src.resources.models import Resources
-                return Resources
-            elif model_class_name == 'Cases':
-                from src.cases.models import Cases
-                return Cases
-            elif model_class_name == 'Jobs':
-                from src.jobs.models import Jobs
-                return Jobs
+            # Use the already imported models from the top of the file
+            model_map = {
+                'Resources': Resources,
+                'Cases': Cases,
+                'Jobs': Jobs,
+                'JobsTasks': JobsTasks,
+                'Billings': Billings,
+                'Witnesses': Witnesses,
+                'WitnessVideos': WitnessVideos,
+                'AdditionalDocuments': AdditionalDocuments,
+                'EquipmentTime': EquipmentTime,
+            }
+            
+            if model_class_name in model_map:
+                return model_map[model_class_name]
             else:
                 logger.warning(f"Unknown model class: {model_class_name}")
                 return None
-        except ImportError as e:
-            logger.error(f"Failed to import model {model_class_name}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to resolve model {model_class_name}: {str(e)}")
             return None
     
     def _transform_field_names(self, rb9_record: Dict[str, Any], field_mapping: Dict[str, str]) -> Dict[str, Any]:

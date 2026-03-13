@@ -60,11 +60,11 @@ def create_tokens(data: dict, token_type: str = 'access') -> dict:
     to_encode.update({
         'exp': expire,
         'type': token_type,
-        'iat': utc_now
+        'auth_scheme': 'Bearer'
     })
     
     token = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
-    logger.info(f"Token created for resource: {data.get('rsrc_no')}")
+    logger.info(f"{token_type} created for resource: {data.get('rsrc_no')}")
     return {
         'token': token,
         'expires': expire.isoformat()
@@ -78,9 +78,6 @@ def create_access_token(data: dict) -> dict:
         return {
             'access_token': access_token['token'],
             'refresh_token': refresh_token['token'],
-            'token_type': 'bearer',
-            'expires_in': config.ACCESS_TOKEN_EXPIRATION_TIME,
-            'entered_by': data.get('entered_by')
         }
     except Exception as e:
         logger.error(f"Error creating access token({data.get('rsrc_no')}): {str(e)}")

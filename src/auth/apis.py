@@ -48,27 +48,17 @@ async def login_user(data: LoginCredentialSchema):
                 },
                 status_code=status.HTTP_200_OK,
             )
-        
+        rsrc_name = rsrc_obj.full_name if rsrc_obj.full_name else (rsrc_obj.first_name or rsrc_obj.email)
         token_data = create_access_token({
             'login_name': rsrc_obj.email,
             'rsrc_no': rsrc_obj.rsrc_no,
-            'rsrc_role': rsrc_obj.priority_level
+            'rsrc_name': rsrc_name,
+            'rsrc_role': rsrc_obj.priority_level,
         })
-        
-        resource_response = {   
-            'rsrc_no': rsrc_obj.rsrc_no,
-            'full_name': rsrc_obj.full_name or '',
-            'email': rsrc_obj.email or '',
-            'login_name': rsrc_obj.login_name or '',
-            'rsrc_role': rsrc_obj.priority_level
-        }
         
         response = {
             'access_token': token_data['access_token'],
             'refresh_token': token_data['refresh_token'],
-            'token_type': 'bearer',
-            'expires_in': config.ACCESS_TOKEN_EXPIRATION_TIME,
-            'resource': resource_response
         }
         
         logger.info(f"Login successful for resource: {data.login_name} (rsrc_no: {rsrc_obj.rsrc_no})")
@@ -112,8 +102,8 @@ async def refresh_token(data: RefreshTokenSchema):
                 status_code=status.HTTP_401_UNAUTHORIZED
             )
             
-        rsrc = Resources.get(payload.get('rsrc_no'))
-        if not rsrc:
+        rsrc_obj = Resources.get(payload.get('rsrc_no'))
+        if not rsrc_obj:
             logger.warning(f"Token refresh failed - resource not found (rsrc_no: {payload.get('rsrc_no')})")
             return JSONResponse(
                 content={
@@ -123,32 +113,22 @@ async def refresh_token(data: RefreshTokenSchema):
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED
             )
-            
+        rsrc_name = rsrc_obj.full_name if rsrc_obj.full_name else (rsrc_obj.first_name or rsrc_obj.email)
         token_data = {
-            'login_name': rsrc.email,
-            'rsrc_no': rsrc.rsrc_no,
-            'rsrc_role': rsrc.priority_level
+            'login_name': rsrc_obj.email,
+            'rsrc_no': rsrc_obj.rsrc_no,
+            'rsrc_name': rsrc_name,
+            'rsrc_role': rsrc_obj.priority_level
         }
         
         new_tokens = create_access_token(token_data)
         
-        resource_response = {   
-            'rsrc_no': rsrc.rsrc_no,
-            'full_name': rsrc.full_name or '',
-            'email': rsrc.email or '',
-            'login_name': rsrc.login_name or '',
-            'rsrc_role': rsrc.priority_level
-        }
-        
         response = {
             'access_token': new_tokens['access_token'],
             'refresh_token': new_tokens['refresh_token'],
-            'token_type': 'bearer',
-            'expires_in': new_tokens['expires_in'],
-            'resource': resource_response
         }
         
-        logger.info(f"Token refreshed successfully for resource: {rsrc.email} (rsrc_no: {rsrc.rsrc_no})")
+        logger.info(f"Token refreshed successfully for resource: {rsrc_obj.email} (rsrc_no: {rsrc_obj.rsrc_no})")
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,

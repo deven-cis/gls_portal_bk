@@ -153,6 +153,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         set_context(rsrc_no=rsrc.rsrc_no)
         set_context(rsrc_id=rsrc.id)
         set_context(rsrc_type=rsrc.rsrc_type)
+        set_context(rsrc_role=rsrc.priority_level)  # RBAC: Set user's role
         
         decoded_data.pop('exp', None) 
         decoded_data.pop('type', None)

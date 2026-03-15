@@ -29,6 +29,7 @@ from src.jobs_tasks.utils import (
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
 from src.attorneys.models import Attorneys
+from src.core.rbac import get_current_user_role, is_admin_role
 from src.witnesses.schema import WitnessSchema
 from src.attorneys.schema import AttorneySchema
 from src.core.timezone_utils import get_timezone_now
@@ -1011,6 +1012,7 @@ async def cancel_jobstask(
 
 async def cancelled_and_completed_jobstasks(
     type: str,
+    adminMode: Optional[bool],
     start_date: Optional[date],
     end_date: Optional[date],
     page: int,
@@ -1024,6 +1026,8 @@ async def cancelled_and_completed_jobstasks(
 ) -> JSONResponse:
     try:
         current_rsrc_no = get_context('rsrc_no')
+        current_role = get_current_user_role()
+        
         if type not in ['Cancelled', 'Completed']:
             logger.error(f"Invalid type: {type}")
             return JSONResponse(
@@ -1038,7 +1042,7 @@ async def cancelled_and_completed_jobstasks(
             )
 
         logger.info(
-            f"Listing {type} jobstasks for rsrc {current_rsrc_no} ,job_no={job_no}"
+            f"AUDIT: User {current_rsrc_no} ({current_role}) accessing {type} jobstasks"
         )
 
         # Base query
@@ -1051,9 +1055,39 @@ async def cancelled_and_completed_jobstasks(
                 Cases.is_archived == False,
                 Jobs.is_archived == False,
                 JobsTasks.is_archived == False,
-                JobsTasks.rsrc_no == current_rsrc_no
             )
         )
+
+        # Determine if admin access is enabled
+        # Priority: adminMode parameter > user role check
+        admin_access_enabled = False
+        
+        if adminMode is True:
+            # Frontend explicitly requested admin mode
+            admin_access_enabled = is_admin_role(current_role)
+            if admin_access_enabled:
+                logger.info(
+                    f"AUDIT: User {current_rsrc_no} ({current_role}) "
+                    f"requesting admin mode - ALLOWED"
+                )
+            else:
+                logger.warning(
+                    f"AUDIT: User {current_rsrc_no} ({current_role}) "
+                    f"requested admin mode but lacks admin role - DENIED"
+                )
+        else:
+            # Frontend did not request admin mode or explicitly passed false
+            admin_access_enabled = False
+            logger.debug(
+                f"User {current_rsrc_no} ({current_role}) accessing in standard mode"
+            )
+        
+        # Filter by user's own records if not in admin mode
+        if not admin_access_enabled:
+            query = query.filter(JobsTasks.rsrc_no == current_rsrc_no)
+            logger.debug(
+                f"User {current_rsrc_no} ({current_role}) filtered to own jobstasks"
+            )
 
         # Status filter
         if type == 'Cancelled':
@@ -1121,6 +1155,12 @@ async def cancelled_and_completed_jobstasks(
             for jobstask in jobstasks
         ]
 
+        # AUDIT: Log successful access
+        logger.info(
+            f"AUDIT: User {current_rsrc_no} ({current_role}) "
+            f"retrieved {len(jobstasks_data)}/{total} {type} jobstasks"
+        )
+
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
@@ -1139,6 +1179,8 @@ async def cancelled_and_completed_jobstasks(
             status_code=status.HTTP_200_OK
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.error(f"Invalid parameter value: {str(e)}")
         return JSONResponse(
@@ -1151,7 +1193,10 @@ async def cancelled_and_completed_jobstasks(
             status_code=status.HTTP_400_BAD_REQUEST
         )
     except Exception as e:
-        logger.error(f"Error listing {type} jobstasks: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error listing {type} jobstasks for user {current_rsrc_no}: {str(e)}",
+            exc_info=True
+        )
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,

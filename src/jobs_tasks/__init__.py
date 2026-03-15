@@ -123,6 +123,7 @@ async def cancel_jobstask_route(
 @jobstasks_apis.get('/cancelled_and_completed_jobs/{type}')
 async def cancelled_and_completed_jobstasks_route(
     type: str,
+    adminMode: Optional[bool] = Query(False, description="Set to true to view all records (admin mode)"),
     start_date: Optional[date] = Query(None, description="Start date filter"),
     end_date: Optional[date] = Query(None, description="End date filter"),
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
@@ -135,7 +136,7 @@ async def cancelled_and_completed_jobstasks_route(
     db: Session = Depends(get_db)
 ) -> JSONResponse:
     return await cancelled_and_completed_jobstasks(
-        type, start_date, end_date, page, page_size, current_user, db,
+        type, adminMode, start_date, end_date, page, page_size, current_user, db,
         job_no=job_no, witness_name=witness_name, case_name=case_name, case_number=case_number
     )
 

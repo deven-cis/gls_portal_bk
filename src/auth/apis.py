@@ -1,8 +1,11 @@
 from datetime import datetime
+from threading import Lock
 
 from fastapi.exceptions import HTTPException
-from fastapi import status
+from fastapi import status, Depends
 from jose import JWTError
+from sqlalchemy.orm import Session
+
 from src.auth.schema import LoginCredentialSchema
 from src.resources.utils import verify_password
 from src.core.logger import logger
@@ -13,8 +16,19 @@ from src.core.config import config
 from src.auth.utils import create_forget_password_token, verify_token
 from src.resources.utils import hash_password
 from src.auth.schema import PasswordResetSchema, RefreshTokenSchema
-from fastapi import Depends
 from fastapi.responses import JSONResponse
+from src.core.database import get_db
+
+# Global lock to prevent concurrent token refresh per user
+_refresh_locks = {}
+_locks_lock = Lock()
+
+def get_user_refresh_lock(rsrc_no: int):
+    """Get or create a lock for a specific user"""
+    with _locks_lock:
+        if rsrc_no not in _refresh_locks:
+            _refresh_locks[rsrc_no] = Lock()
+        return _refresh_locks[rsrc_no]
 
 
 async def login_user(data: LoginCredentialSchema):
@@ -84,12 +98,12 @@ async def login_user(data: LoginCredentialSchema):
             status_code=status.HTTP_200_OK,
         )
 
-async def refresh_token(data: RefreshTokenSchema):
+async def refresh_token(data: RefreshTokenSchema, db: Session = Depends(get_db)):
     try:
-        # Lazy import to prevent circular import
         from src.resources.models import Resources
         
         payload = decode_token(data.refresh_token)
+        rsrc_no = payload.get('rsrc_no')
         
         if payload.get('type') != 'refresh':
             logger.warning("Token refresh failed - invalid token type")
@@ -101,42 +115,73 @@ async def refresh_token(data: RefreshTokenSchema):
                 },
                 status_code=status.HTTP_401_UNAUTHORIZED
             )
-            
-        rsrc_obj = Resources.get(payload.get('rsrc_no'))
-        if not rsrc_obj:
-            logger.warning(f"Token refresh failed - resource not found (rsrc_no: {payload.get('rsrc_no')})")
+        
+        # Get user-specific lock to prevent concurrent refreshes
+        user_lock = get_user_refresh_lock(rsrc_no)
+        if not user_lock.acquire(blocking=False):
+            logger.warning(f"Token refresh already in progress for rsrc_no: {rsrc_no}")
             return JSONResponse(
                 content={
-                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                    "status_code": status.HTTP_429_TOO_MANY_REQUESTS,
                     "success": False,
-                    "result": {"message": "Resource not found"}
+                    "result": {"message": "Token refresh already in progress"}
                 },
-                status_code=status.HTTP_401_UNAUTHORIZED
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS
             )
-        rsrc_name = rsrc_obj.full_name if rsrc_obj.full_name else (rsrc_obj.first_name or rsrc_obj.email)
-        token_data = {
-            'login_name': rsrc_obj.email,
-            'rsrc_no': rsrc_obj.rsrc_no,
-            'rsrc_name': rsrc_name,
-            'rsrc_role': rsrc_obj.priority_level
-        }
         
-        new_tokens = create_access_token(token_data)
-        
-        response = {
-            'access_token': new_tokens['access_token'],
-            'refresh_token': new_tokens['refresh_token'],
-        }
-        
-        logger.info(f"Token refreshed successfully for resource: {rsrc_obj.email} (rsrc_no: {rsrc_obj.rsrc_no})")
-        return JSONResponse(
-            content={
-                "status_code": status.HTTP_200_OK,
-                "success": True,
-                "result": response
-            },
-            status_code=status.HTTP_200_OK
-        )
+        try:
+            # Query by rsrc_no field (not id)
+            rsrc_obj = db.query(Resources).filter(Resources.rsrc_no == rsrc_no).first()
+            
+            if not rsrc_obj:
+                logger.warning(f"Token refresh failed - resource not found (rsrc_no: {rsrc_no})")
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_401_UNAUTHORIZED,
+                        "success": False,
+                        "result": {"message": "Resource not found"}
+                    },
+                    status_code=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Check if resource is active
+            if not rsrc_obj.is_active:
+                logger.warning(f"Token refresh failed - resource inactive (rsrc_no: {rsrc_no})")
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_401_UNAUTHORIZED,
+                        "success": False,
+                        "result": {"message": "Resource is inactive"}
+                    },
+                    status_code=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            rsrc_name = rsrc_obj.full_name if rsrc_obj.full_name else (rsrc_obj.first_name or rsrc_obj.email)
+            token_data = {
+                'login_name': rsrc_obj.email,
+                'rsrc_no': rsrc_obj.rsrc_no,
+                'rsrc_name': rsrc_name,
+                'rsrc_role': rsrc_obj.priority_level
+            }
+            
+            new_tokens = create_access_token(token_data)
+            
+            response = {
+                'access_token': new_tokens['access_token'],
+                'refresh_token': new_tokens['refresh_token'],
+            }
+            
+            logger.info(f"Token refreshed successfully for resource: {rsrc_obj.email} (rsrc_no: {rsrc_obj.rsrc_no})")
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_200_OK,
+                    "success": True,
+                    "result": response
+                },
+                status_code=status.HTTP_200_OK
+            )
+        finally:
+            user_lock.release()
         
     except HTTPException as e:
         logger.error(f"HTTPException during token refresh: {e.detail}")

@@ -56,7 +56,7 @@ async def get_cancelled_jobstask_details(
                 Jobs.is_archived == False,
                 Cases.is_archived == False,
                 JobsTasks.is_archived == False,
-                JobsTasks.rsrc_no == current_rsrc_no,
+                # JobsTasks.rsrc_no == current_rsrc_no,
                 Jobs.computed_status == JobStatusEnum.CANCELLED.value
             )
             .first()
@@ -134,7 +134,7 @@ async def get_completed_jobstask_details(
                 Jobs.job_no == job_no,
                 Jobs.is_archived == False,
                 Cases.is_archived == False,
-                JobsTasks.rsrc_no == current_rsrc_no,
+                # JobsTasks.rsrc_no == current_rsrc_no,
                 JobsTasks.is_archived == False,
                 Jobs.computed_status == JobStatusEnum.COMPLETED.value
             )
@@ -1012,7 +1012,7 @@ async def cancel_jobstask(
 
 async def cancelled_and_completed_jobstasks(
     type: str,
-    adminMode: Optional[bool],
+    admin: Optional[bool],
     start_date: Optional[date],
     end_date: Optional[date],
     page: int,
@@ -1058,34 +1058,30 @@ async def cancelled_and_completed_jobstasks(
             )
         )
 
-        # Determine if admin access is enabled
-        # Priority: adminMode parameter > user role check
-        admin_access_enabled = False
         
-        if adminMode is True:
+        admin_access_enabled = False
+        if admin is True:   
             # Frontend explicitly requested admin mode
             admin_access_enabled = is_admin_role(current_role)
             if admin_access_enabled:
                 logger.info(
-                    f"AUDIT: User {current_rsrc_no} ({current_role}) "
-                    f"requesting admin mode - ALLOWED"
+                    f"AUDIT: User {current_rsrc_no} ({current_role}) requesting admin mode - ALLOWED"
                 )
             else:
                 logger.warning(
-                    f"AUDIT: User {current_rsrc_no} ({current_role}) "
-                    f"requested admin mode but lacks admin role - DENIED"
+                    f"AUDIT: User {current_rsrc_no} ({current_role}) requested admin mode but lacks admin role - DENIED"
                 )
         else:
             # Frontend did not request admin mode or explicitly passed false
             admin_access_enabled = False
-            logger.debug(
+            logger.warning(
                 f"User {current_rsrc_no} ({current_role}) accessing in standard mode"
             )
         
         # Filter by user's own records if not in admin mode
         if not admin_access_enabled:
             query = query.filter(JobsTasks.rsrc_no == current_rsrc_no)
-            logger.debug(
+            logger.info(
                 f"User {current_rsrc_no} ({current_role}) filtered to own jobstasks"
             )
 

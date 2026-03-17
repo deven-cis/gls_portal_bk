@@ -2,6 +2,8 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 from fastapi import UploadFile, HTTPException, status
+import aiofiles
+from src.core.logger import logger
 
 ALLOWED_EXTENSIONS = {'.docx', '.pdf'}
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
@@ -72,6 +74,7 @@ async def save_file(file: UploadFile, subfolder: str) -> tuple[str, str]:
 
 
 async def save_video_file(file: UploadFile, subfolder: str, chunk_number: Optional[int] = None, upload_id: Optional[str] = None) -> tuple[str, str]:
+    """Save video using chunked streaming to avoid loading entire file in memory."""
     validate_video_file(file)
     
     file_ext = Path(file.filename).suffix.lower()
@@ -87,9 +90,20 @@ async def save_video_file(file: UploadFile, subfolder: str, chunk_number: Option
         file_path = upload_dir / unique_filename
         mode = "wb"
     
-    with open(file_path, mode) as buffer:
-        content = await file.read()
-        buffer.write(content)
+    # Chunked streaming: write in 1MB chunks instead of loading entire file
+    chunk_size = 1024 * 1024  # 1MB chunks
+    total_size = 0
+    try:
+        async with aiofiles.open(file_path, mode) as buffer:
+            while chunk := await file.read(chunk_size):
+                await buffer.write(chunk)
+                total_size += len(chunk)
+        logger.info(f"Video file saved: {unique_filename} ({total_size / (1024*1024):.2f}MB) using {mode} mode")
+    except Exception as e:
+        logger.error(f"Error saving video file {unique_filename}: {str(e)}", exc_info=True)
+        if Path(file_path).exists():
+            Path(file_path).unlink()
+        raise
     
     return file.filename, str(file_path)
 

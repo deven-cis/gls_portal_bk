@@ -38,54 +38,54 @@ app.add_middleware(
 
 app.include_router(
     auth_router,
-    # prefix="/api",
+    prefix="/api",
     tags=["authentication"]
 )
 
 app.include_router(
     resources_router,
-    # prefix="/api",
+    prefix="/api",
     tags=["users"]
 )
 
 app.include_router(
     cases_router,
-    # prefix="/api",
+    prefix="/api",
     tags=['case']
 )
 
 app.include_router(
     jobstasks_apis,
-    # prefix="/api",
+    prefix="/api",
     tags=['jobs']
 )
 
 app.include_router(
     witnesses_api,
-    # prefix="/api",
+    prefix="/api",
     tags=['witnesses']
 
 )
 app.include_router(
     attorneys_router,
-    #prefix="/api",
+    prefix="/api",
     tags=['attorneys']
 )
 
 app.include_router(
     billings_router,
-    #prefix="/api",
+    prefix="/api",
     tags=['billings']
 )
 
 app.include_router(
     equipment_time_router,
-    #prefix="/api",
+    prefix="/api",
     tags=['equipment-time']
 )
 
 app.include_router(
     job_assignment_apis,
-    #prefix="/api",
+    prefix="/api",
     tags=['job-assignment']
 )

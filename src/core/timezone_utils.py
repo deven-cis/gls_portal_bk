@@ -7,7 +7,7 @@ from src.core.logger import logger
 
 def get_default_timezone() -> str:
     app_env = config.APP_ENV.lower()
-    logger.info(f"App environment: {app_env}")
+    
     if app_env in ['staging', 'production']:
         return config.DEFAULT_TIMEZONE_PRODUCTION
     else:

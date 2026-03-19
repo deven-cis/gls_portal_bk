@@ -1,22 +1,36 @@
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import json
-from datetime import datetime, time as dt_time
+import uuid
+from datetime import timedelta, time as dt_time
 from pathlib import Path
-from fastapi import status, UploadFile
+from fastapi import HTTPException, status, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
 from src.core.context import get_context
 from src.core.logger import logger
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
-from src.core.file_utils import save_video_file
+from src.uploaded_videos.models import UploadedVideos
+from src.uploaded_videos.services import cleanup_expired_uploaded_videos
+from src.core.file_utils import (
+    append_upload_chunk_to_file,
+    extract_video_metadata,
+    get_temp_video_upload_path,
+    promote_video_to_final_storage,
+    save_video_file,
+    validate_video_filename,
+)
 from src.witnesses.schema import (
     CreateWitnessFrontSchema,
     WitnessCreateSchema,
     WitnessNameUpdateSchema,
+    WitnessVideoUploadCancelSchema,
     WitnessSaveAllPayloadSchema,
     WitnessSchema,
+    WitnessVideoUploadCompleteSchema,
+    WitnessVideoUploadInitSchema,
 )
+from src.core.config import config
 from src.core.timezone_utils import get_timezone_now
 from src.jobs.models import Jobs
 from src.jobs_tasks.models import JobsTasks
@@ -39,6 +53,441 @@ def _normalize_time_string(value: Optional[str]) -> Optional[str]:
         return None
 
 
+def _build_video_fields_from_upload(upload_data: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "file_name": upload_data.get("file_name"),
+        "file_path": upload_data.get("file_path"),
+        "file_size": upload_data.get("file_size"),
+        "duration_seconds": upload_data.get("duration_seconds"),
+        "timecode": upload_data.get("timecode"),
+    }
+
+
+def _build_upload_response(upload: UploadedVideos) -> Dict[str, Any]:
+    return {
+        "upload_id": upload.upload_id,
+        "file_name": upload.original_file_name,
+        "file_path": upload.final_file_path or upload.temp_file_path,
+        "file_size": upload.file_size or upload.expected_file_size,
+        "duration_seconds": float(upload.duration_seconds) if upload.duration_seconds is not None else None,
+        "timecode": upload.timecode,
+        "format_name": upload.format_name,
+        "status": upload.status,
+    }
+
+
+def _get_upload_record(
+    upload_id: str,
+    db: Session,
+    lock_for_update: bool = False,
+) -> UploadedVideos:
+    query = (
+        db.query(UploadedVideos)
+        .filter(
+            UploadedVideos.upload_id == upload_id,
+            UploadedVideos.is_archived == False,
+        )
+    )
+    if lock_for_update:
+        query = query.with_for_update()
+
+    upload = query.first()
+    if not upload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload session {upload_id} not found",
+        )
+    return upload
+
+
+def _consume_completed_upload(
+    upload_id: str,
+    db: Session,
+    now,
+    current_rsrc_no: int,
+    witness_video_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    upload = _get_upload_record(upload_id, db, lock_for_update=True)
+    if upload.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Upload {upload_id} is not ready to attach",
+        )
+    if upload.attached_at is not None or upload.status == "attached":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Upload {upload_id} has already been attached",
+        )
+    if not upload.temp_file_path or not Path(upload.temp_file_path).exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload file for {upload_id} was not found",
+        )
+
+    upload.status = "attaching"
+    upload.last_modified_at = now
+    upload.last_modified_by = current_rsrc_no
+    db.add(upload)
+    db.flush()
+
+    stored_file_name, final_file_path = promote_video_to_final_storage(
+        source_path=upload.temp_file_path,
+        file_ext=upload.file_ext,
+        subfolder="witness_videos",
+    )
+
+    upload.stored_file_name = stored_file_name
+    upload.final_file_path = final_file_path
+    upload.temp_file_path = None
+    upload.status = "attached"
+    upload.attached_at = now
+    upload.witness_video_id = witness_video_id
+    upload.last_modified_at = now
+    upload.last_modified_by = current_rsrc_no
+
+    return {
+        "file_name": upload.original_file_name,
+        "file_path": final_file_path,
+        "file_size": upload.file_size,
+        "duration_seconds": float(upload.duration_seconds) if upload.duration_seconds is not None else None,
+        "timecode": upload.timecode,
+    }
+
+
+async def trigger_uploaded_video_cleanup(db: Session) -> JSONResponse:
+    now = get_timezone_now()
+    app_env = (config.APP_ENV or "").lower().strip()
+
+    if app_env in {"production", "staging"}:
+        logger.warning(
+            "Blocked manual uploaded video cleanup endpoint in %s environment",
+            app_env,
+        )
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_403_FORBIDDEN,
+                "message": "Manual cleanup endpoint is disabled in production-like environments",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    logger.warning(
+        "Manual uploaded video cleanup endpoint invoked in %s environment",
+        app_env or "unknown",
+    )
+    try:
+        result = cleanup_expired_uploaded_videos(db, now, source="api-manual")
+        db.commit()
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Expired uploaded video cleanup executed successfully",
+                "success": True,
+                "result": result,
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("Manual uploaded video cleanup failed: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to run uploaded video cleanup: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def init_witness_video_upload(data: WitnessVideoUploadInitSchema, db: Session) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        cleanup_expired_uploaded_videos(db, now, source="api-init")
+
+        file_ext = validate_video_filename(data.file_name)
+        upload_id = str(uuid.uuid4())
+        upload = UploadedVideos(
+            upload_id=upload_id,
+            original_file_name=data.file_name,
+            content_type=data.content_type,
+            file_ext=file_ext,
+            expected_file_size=data.file_size,
+            total_chunks=data.total_chunks,
+            received_chunks=0,
+            bytes_received=0,
+            status="initialized",
+            expires_at=now + timedelta(hours=24),
+            entered_at=now,
+            entered_by=current_rsrc_no,
+            last_modified_at=now,
+            last_modified_by=current_rsrc_no,
+        )
+        db.add(upload)
+        db.commit()
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_201_CREATED,
+                "message": "Video upload initialized successfully",
+                "success": True,
+                "result": {
+                    "upload_id": upload.upload_id,
+                    "file_name": upload.original_file_name,
+                    "file_size": upload.expected_file_size,
+                    "total_chunks": upload.total_chunks,
+                    "status": upload.status,
+                },
+            },
+            status_code=status.HTTP_201_CREATED,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        logger.error("Failed to initialize witness video upload: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to initialize witness video upload: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def upload_witness_video_chunk(
+    upload_id: str,
+    chunk_number: int,
+    total_chunks: int,
+    file: UploadFile,
+    db: Session,
+) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        upload = _get_upload_record(upload_id, db)
+
+        file_ext = validate_video_filename(file.filename or upload.original_file_name)
+        if file_ext != upload.file_ext:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded chunk file extension does not match the initialized upload",
+            )
+
+        expected_chunk = int(upload.received_chunks or 0)
+        if chunk_number != expected_chunk:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Expected chunk_number {expected_chunk}, got {chunk_number}",
+            )
+
+        if upload.total_chunks is None:
+            upload.total_chunks = total_chunks
+        elif int(upload.total_chunks) != int(total_chunks):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="total_chunks does not match the initialized upload session",
+            )
+
+        temp_file_path = Path(upload.temp_file_path) if upload.temp_file_path else get_temp_video_upload_path(upload.upload_id, upload.file_ext)
+        if chunk_number == 0 and temp_file_path.exists():
+            temp_file_path.unlink()
+
+        bytes_written = await append_upload_chunk_to_file(temp_file_path, file, mode="ab")
+
+        upload.temp_file_path = str(temp_file_path)
+        upload.bytes_received = int(upload.bytes_received or 0) + bytes_written
+        upload.received_chunks = expected_chunk + 1
+        upload.status = "uploading" if upload.received_chunks < upload.total_chunks else "uploaded"
+        upload.last_modified_at = now
+        upload.last_modified_by = current_rsrc_no
+        db.add(upload)
+        db.commit()
+
+        result = {
+            "upload_id": upload.upload_id,
+            "chunk_number": chunk_number,
+            "received_chunks": upload.received_chunks,
+            "total_chunks": upload.total_chunks,
+            "bytes_received": upload.bytes_received,
+            "status": upload.status,
+        }
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Video chunk uploaded successfully",
+                "success": True,
+                "result": result,
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        logger.error("Failed to upload witness video chunk: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to upload video chunk: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, db: Session) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        upload = _get_upload_record(data.upload_id, db)
+
+        if upload.total_chunks is None or upload.received_chunks != upload.total_chunks:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Upload is incomplete ({upload.received_chunks}/{upload.total_chunks} chunks received)",
+            )
+        if not upload.temp_file_path or not Path(upload.temp_file_path).exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Uploaded temp file not found",
+            )
+
+        metadata = await extract_video_metadata(upload.temp_file_path)
+        if not metadata.get("file_size"):
+            metadata["file_size"] = Path(upload.temp_file_path).stat().st_size
+
+        upload.file_size = metadata.get("file_size")
+        upload.duration_seconds = metadata.get("duration_seconds")
+        upload.timecode = metadata.get("timecode")
+        upload.format_name = metadata.get("format_name")
+        upload.status = "completed"
+        upload.last_modified_at = now
+        upload.last_modified_by = current_rsrc_no
+        db.add(upload)
+        db.commit()
+
+        result = _build_upload_response(upload)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Video upload completed successfully",
+                "success": True,
+                "result": result,
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        logger.error("Failed to complete witness video upload: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to complete video upload: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def cancel_witness_video_upload(data: WitnessVideoUploadCancelSchema, db: Session) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        upload = _get_upload_record(data.upload_id, db, lock_for_update=True)
+
+        if upload.attached_at is not None or upload.status == "attached":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Attached uploads cannot be cancelled",
+            )
+
+        deleted_files = 0
+        for file_path in [upload.temp_file_path, upload.final_file_path]:
+            if file_path and Path(file_path).exists():
+                try:
+                    Path(file_path).unlink()
+                    deleted_files += 1
+                except Exception:
+                    logger.warning("Failed to delete cancelled upload file %s", file_path, exc_info=True)
+
+        upload.temp_file_path = None
+        upload.final_file_path = None
+        upload.status = "cancelled"
+        upload.is_archived = True
+        upload.last_modified_at = now
+        upload.last_modified_by = current_rsrc_no
+        db.add(upload)
+        db.commit()
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Video upload cancelled successfully",
+                "success": True,
+                "result": {
+                    "upload_id": upload.upload_id,
+                    "status": upload.status,
+                    "deleted_files": deleted_files,
+                },
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to cancel witness video upload: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to cancel video upload: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
     try:
         current_rsrc_no = get_context("rsrc_no")
@@ -47,7 +496,12 @@ async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
             .join(Jobs, Witnesses.job_no == Jobs.job_no)
             .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
             .options(
-                joinedload(Witnesses.witness_vid)
+                joinedload(Witnesses.witness_vid),
+                with_loader_criteria(
+                    WitnessVideos,
+                    WitnessVideos.is_archived == False,
+                    include_aliases=True
+                )
             )
             .filter(
                 Witnesses.job_no == job_no,
@@ -314,6 +768,7 @@ async def save_witness_and_videos(
     db: Session,
 ) -> JSONResponse:
     try:
+        logger.info("Saving witness and videos proccess-----------")
         raw = json.loads(payload)
         data = WitnessSaveAllPayloadSchema.model_validate(raw)
     except Exception as e:
@@ -479,25 +934,47 @@ async def save_witness_and_videos(
                     update_vid["end_time"] = _normalize_time_string(item.end_time)
 
                 item_dict = item.model_dump(exclude_unset=True)
-                if 'file_index' in item_dict:
+                if item.upload_token:
+                    upload_data = _consume_completed_upload(
+                        item.upload_token,
+                        db,
+                        now,
+                        current_rsrc_no,
+                        witness_video_id=vid.id,
+                    )
+                    update_vid.update(_build_video_fields_from_upload(upload_data))
+                elif 'file_index' in item_dict:
                     if item.file_index is not None and 0 <= item.file_index < len(files):
-                        update_vid["file_name"], update_vid["file_path"] = await save_video_file(
+                        file_name, file_path, metadata = await save_video_file(
                             files[item.file_index], "witness_videos"
                         )
+                        update_vid["file_name"] = file_name
+                        update_vid["file_path"] = file_path
+                        update_vid["file_size"] = metadata.get("file_size")
+                        update_vid["duration_seconds"] = metadata.get("duration_seconds")
+                        update_vid["timecode"] = metadata.get("timecode")
                     else:
                         update_vid["file_name"] = None
                         update_vid["file_path"] = None
+                        update_vid["file_size"] = None
+                        update_vid["duration_seconds"] = None
+                        update_vid["timecode"] = None
 
                 for key, value in update_vid.items():
                     setattr(vid, key, value)
                 continue
 
             # Create new video
-            file_name, file_path = (
-                await save_video_file(files[item.file_index], "witness_videos")
-                if item.file_index is not None and 0 <= item.file_index < len(files)
-                else (None, None)
-            )
+            if item.upload_token:
+                file_name = None
+                file_path = None
+                metadata = {}
+            else:
+                file_name, file_path, metadata = (
+                    await save_video_file(files[item.file_index], "witness_videos")
+                    if item.file_index is not None and 0 <= item.file_index < len(files)
+                    else (None, None, {})
+                )
             new_vid = WitnessVideos(
                 wit_no=witness.id,
                 job_no=witness.job_no,
@@ -505,12 +982,30 @@ async def save_witness_and_videos(
                 end_time=_normalize_time_string(item.end_time),
                 file_name=file_name,
                 file_path=file_path,
+                file_size=metadata.get("file_size"),
+                duration_seconds=metadata.get("duration_seconds"),
+                timecode=metadata.get("timecode"),
                 entered_at=now,
                 entered_by=current_rsrc_no,
                 last_modified_at=now,
                 last_modified_by=current_rsrc_no
             )
             db.add(new_vid)
+            db.flush()
+
+            if item.upload_token:
+                upload_data = _consume_completed_upload(
+                    item.upload_token,
+                    db,
+                    now,
+                    current_rsrc_no,
+                    witness_video_id=new_vid.id,
+                )
+                new_vid.file_name = upload_data.get("file_name")
+                new_vid.file_path = upload_data.get("file_path")
+                new_vid.file_size = upload_data.get("file_size")
+                new_vid.duration_seconds = upload_data.get("duration_seconds")
+                new_vid.timecode = upload_data.get("timecode")
 
         witness.last_modified_at = now
         witness.last_modified_by = current_rsrc_no

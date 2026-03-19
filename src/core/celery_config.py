@@ -1,6 +1,7 @@
 from celery import Celery
 from celery.schedules import crontab
 from src.core.config import config
+from src.core.timezone_utils import get_default_timezone
 import logging
 
 celery_app = Celery(
@@ -9,14 +10,14 @@ celery_app = Celery(
     backend=config.CELERY_RESULT_BACKEND
 )
 
-celery_app.autodiscover_tasks(['src.jobs', 'src.core.sync'])
+celery_app.autodiscover_tasks(['src.jobs', 'src.core.sync', 'src.uploaded_videos'])
 
 
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
-    timezone='America/New_York',
+    timezone=get_default_timezone(),
     enable_utc=False,
     worker_log_format='[%(asctime)s: %(levelname)s/%(processName)s] %(message)s',
     worker_task_log_format='[%(asctime)s: %(levelname)s/%(processName)s] [%(task_name)s(%(task_id)s)] %(message)s',
@@ -29,19 +30,25 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
-    'update-job-statuses-every-day': {
-        'task': 'src.jobs.tasks.update_job_statuses',
-        'schedule': crontab(hour=0, minute=0),  
-    },
-    'sync-external-data-every-day': {
-        'task': 'src.core.sync.tasks.sync_external_data',
-        'schedule': crontab(minute='*/2'),
+    # 'update-job-statuses-every-day': {
+    #     'task': 'src.jobs.tasks.update_job_statuses',
+    #     'schedule': crontab(hour=0, minute=0),  
+    # },
+    # 'sync-external-data-every-day': {
+    #     'task': 'src.core.sync.tasks.sync_external_data',
+    #     'schedule': crontab(minute='*/2'),
+    #     'options': {
+    #         'expires': 300, 
+    #     },
+    # },
+    'cleanup-expired-uploaded-videos-every-5-hours': {
+        'task': 'src.uploaded_videos.tasks.cleanup_expired_uploaded_videos_task',
+        'schedule': crontab(minute=0, hour='*/5'),
         'options': {
-            'expires': 300, 
+            'expires': 7200,
         },
-    },
+    }
 }
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('celery')
 logger.setLevel(logging.INFO)

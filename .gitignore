@@ -44,4 +44,6 @@ SETUP_COMPLETE.md
 .qodobot/
 
 .uploads/
-uploads/
+uploads/*
+
+uploads/witness_videos/

@@ -111,6 +111,7 @@ class WitnessVideoUpsertSchema(BaseModel):
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     file_index: Optional[int] = None
+    upload_token: Optional[str] = None
     delete: bool = False
 
 
@@ -137,3 +138,18 @@ class WitnessSaveAllPayloadSchema(BaseModel):
 class WitnessCompletedDetailsSchema(BaseModel):
     witness_name:Optional[str] = None
     videos: List[WitnessVideoUpsertSchema] = Field(default_factory=list)
+
+
+class WitnessVideoUploadInitSchema(BaseModel):
+    file_name: str
+    file_size: Optional[int] = None
+    content_type: Optional[str] = None
+    total_chunks: Optional[int] = None
+
+
+class WitnessVideoUploadCompleteSchema(BaseModel):
+    upload_id: str
+
+
+class WitnessVideoUploadCancelSchema(BaseModel):
+    upload_id: str

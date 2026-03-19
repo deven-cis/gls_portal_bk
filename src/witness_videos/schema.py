@@ -10,6 +10,9 @@ class WitnessVideoSchema(BaseModel):
     end_time: Optional[time] = None
     file_name: Optional[str] = None
     file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    timecode: Optional[str] = None
     entered_at: Optional[datetime] = None
 
     class Config:

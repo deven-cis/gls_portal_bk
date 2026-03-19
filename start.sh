@@ -13,5 +13,5 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 echo "-------------------------------------------"
 echo ""
-
+# src.jobs.tasks,src.core.sync.tasks,src.witness_videos.tasks,src.uploaded_videos.tasks
 honcho start

@@ -10,7 +10,7 @@ from src.uploaded_videos.models import UploadedVideos
 
 def cleanup_expired_uploaded_videos(db: Session, now, source: str = "unknown") -> Dict[str, int]:
     cleanup_cutoff = now - timedelta(hours=1)
-    cleanup_statuses = ("initialized", "uploading", "uploaded", "completed", "attach_failed")
+    cleanup_statuses = ("initialized", "uploading", "uploaded", "completed", "attach_failed", "paused")
 
     expired_uploads = (
         db.query(UploadedVideos)

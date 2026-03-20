@@ -12,6 +12,8 @@ from src.witnesses.apis import (
     init_witness_video_upload,
     upload_witness_video_chunk,
     complete_witness_video_upload,
+    pause_witness_video_upload,
+    resume_witness_video_upload,
     cancel_witness_video_upload,
     trigger_uploaded_video_cleanup,
     save_witness_and_videos,
@@ -23,6 +25,8 @@ from src.witnesses.schema import (
     WitnessNameUpdateSchema,
     WitnessVideoUploadInitSchema,
     WitnessVideoUploadCompleteSchema,
+    WitnessVideoUploadPauseSchema,
+    WitnessVideoUploadResumeSchema,
     WitnessVideoUploadCancelSchema,
 )
 
@@ -96,6 +100,23 @@ async def complete_witness_video_upload_endpoint(
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     return await complete_witness_video_upload(data, db)
+
+@witnesses_api.post("/uploads/pause", status_code=200)
+async def pause_witness_video_upload_endpoint(
+    data: WitnessVideoUploadPauseSchema,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return await pause_witness_video_upload(data, db)
+
+
+@witnesses_api.post("/uploads/resume", status_code=200)
+async def resume_witness_video_upload_endpoint(
+    data: WitnessVideoUploadResumeSchema,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return await resume_witness_video_upload(data, db)
 
 
 @witnesses_api.post("/uploads/cancel", status_code=200)

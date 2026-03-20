@@ -151,5 +151,13 @@ class WitnessVideoUploadCompleteSchema(BaseModel):
     upload_id: str
 
 
+class WitnessVideoUploadPauseSchema(BaseModel):
+    upload_id: str
+
+
+class WitnessVideoUploadResumeSchema(BaseModel):
+    upload_id: str
+
+
 class WitnessVideoUploadCancelSchema(BaseModel):
     upload_id: str

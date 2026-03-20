@@ -24,6 +24,8 @@ from src.witnesses.schema import (
     CreateWitnessFrontSchema,
     WitnessCreateSchema,
     WitnessNameUpdateSchema,
+    WitnessVideoUploadPauseSchema,
+    WitnessVideoUploadResumeSchema,
     WitnessVideoUploadCancelSchema,
     WitnessSaveAllPayloadSchema,
     WitnessSchema,
@@ -69,6 +71,9 @@ def _build_upload_response(upload: UploadedVideos) -> Dict[str, Any]:
         "file_name": upload.original_file_name,
         "file_path": upload.final_file_path or upload.temp_file_path,
         "file_size": upload.file_size or upload.expected_file_size,
+        "bytes_received": upload.bytes_received,
+        "received_chunks": upload.received_chunks,
+        "total_chunks": upload.total_chunks,
         "duration_seconds": float(upload.duration_seconds) if upload.duration_seconds is not None else None,
         "timecode": upload.timecode,
         "format_name": upload.format_name,
@@ -278,7 +283,23 @@ async def upload_witness_video_chunk(
     try:
         current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        upload = _get_upload_record(upload_id, db)
+        upload = _get_upload_record(upload_id, db, lock_for_update=True)
+
+        if upload.status == "paused":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload is paused. Resume it before sending more chunks.",
+            )
+        if upload.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload has already been cancelled.",
+            )
+        if upload.status in {"completed", "attaching", "attached"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Upload is already in '{upload.status}' state.",
+            )
 
         file_ext = validate_video_filename(file.filename or upload.original_file_name)
         if file_ext != upload.file_ext:
@@ -361,7 +382,18 @@ async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, 
     try:
         current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        upload = _get_upload_record(data.upload_id, db)
+        upload = _get_upload_record(data.upload_id, db, lock_for_update=True)
+
+        if upload.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload has already been cancelled",
+            )
+        if upload.status == "paused":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload is paused. Resume it before completing.",
+            )
 
         if upload.total_chunks is None or upload.received_chunks != upload.total_chunks:
             raise HTTPException(
@@ -370,13 +402,19 @@ async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, 
             )
         if not upload.temp_file_path or not Path(upload.temp_file_path).exists():
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Uploaded temp file not found",
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Uploaded temp file is no longer available. The upload may have been cancelled.",
             )
 
         metadata = await extract_video_metadata(upload.temp_file_path)
         if not metadata.get("file_size"):
-            metadata["file_size"] = Path(upload.temp_file_path).stat().st_size
+            temp_file = Path(upload.temp_file_path)
+            if not temp_file.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Uploaded temp file is no longer available. The upload may have been cancelled.",
+                )
+            metadata["file_size"] = temp_file.stat().st_size
 
         upload.file_size = metadata.get("file_size")
         upload.duration_seconds = metadata.get("duration_seconds")
@@ -414,6 +452,118 @@ async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, 
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "message": f"Failed to complete video upload: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def pause_witness_video_upload(data: WitnessVideoUploadPauseSchema, db: Session) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        upload = _get_upload_record(data.upload_id, db, lock_for_update=True)
+
+        if upload.attached_at is not None or upload.status in {"attached", "attaching", "completed"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Upload in '{upload.status}' state cannot be paused",
+            )
+        if upload.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cancelled uploads cannot be paused",
+            )
+
+        upload.status = "paused"
+        upload.last_modified_at = now
+        upload.last_modified_by = current_rsrc_no
+        db.add(upload)
+        db.commit()
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Video upload paused successfully",
+                "success": True,
+                "result": _build_upload_response(upload),
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to pause witness video upload: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to pause video upload: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def resume_witness_video_upload(data: WitnessVideoUploadResumeSchema, db: Session) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        upload = _get_upload_record(data.upload_id, db, lock_for_update=True)
+
+        if upload.status == "cancelled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cancelled uploads cannot be resumed",
+            )
+        if upload.status in {"completed", "attaching", "attached"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Upload in '{upload.status}' state cannot be resumed",
+            )
+
+        upload.status = "uploading" if int(upload.received_chunks or 0) > 0 else "initialized"
+        upload.last_modified_at = now
+        upload.last_modified_by = current_rsrc_no
+        db.add(upload)
+        db.commit()
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Video upload resumed successfully",
+                "success": True,
+                "result": _build_upload_response(upload),
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to resume witness video upload: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to resume video upload: {str(exc)}",
                 "success": False,
                 "result": {},
             },

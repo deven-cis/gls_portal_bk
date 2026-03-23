@@ -5,6 +5,7 @@ from datetime import timedelta, time as dt_time
 from pathlib import Path
 from fastapi import HTTPException, status, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
+from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
 from src.core.context import get_context
 from src.core.logger import logger
@@ -33,6 +34,7 @@ from src.witnesses.schema import (
     WitnessVideoUploadInitSchema,
 )
 from src.core.config import config
+from src.core.storage_urls import build_video_download_url
 from src.core.timezone_utils import get_timezone_now
 from src.jobs.models import Jobs
 from src.jobs_tasks.models import JobsTasks
@@ -689,8 +691,106 @@ async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
             },
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-        
-        
+
+
+async def get_witness_video_download_link(
+    video_id: int,
+    db: Session,
+    request_base_url: Optional[str] = None,
+) -> JSONResponse:
+    """
+    Build a browser-downloadable URL for a single witness video.
+    URL generation is centralized so switching to CDN/S3 later needs minimal changes.
+    """
+    try:
+        current_rsrc_no = get_context("rsrc_no")
+        if current_rsrc_no is None:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Unable to determine current resource context",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        video = (
+            db.query(WitnessVideos)
+            .join(Witnesses, WitnessVideos.wit_no == Witnesses.id)
+            .join(Jobs, WitnessVideos.job_no == Jobs.job_no)
+            .join(Cases, Jobs.case_no == Cases.case_no)
+            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+            .filter(
+                WitnessVideos.id == video_id,
+                WitnessVideos.is_archived == False,
+                Witnesses.is_archived == False,
+                Jobs.is_archived == False,
+                Cases.is_archived == False,
+                and_(
+                    JobsTasks.rsrc_no == current_rsrc_no,
+                    JobsTasks.is_archived == False,
+                ),
+            )
+            .first()
+        )
+
+        if not video or not video.file_path:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Video not found or access denied",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not str(video.file_path).startswith(("http://", "https://")):
+            if not Path(video.file_path).exists():
+                return JSONResponse(
+                    content={
+                        "status_code": status.HTTP_404_NOT_FOUND,
+                        "message": "Video file is missing on server",
+                        "success": False,
+                        "result": {},
+                    },
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+
+        download_url = build_video_download_url(
+            file_path=video.file_path,
+            request_base_url=request_base_url,
+        )
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Video download link generated successfully",
+                "success": True,
+                "result": {
+                    "video_id": video.id,
+                    "job_no": video.job_no,
+                    "file_name": video.file_name or Path(video.file_path).name,
+                    "download_url": download_url,
+                    "storage_backend": (config.STORAGE_BACKEND or "local").strip().lower(),
+                },
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        logger.error("Error generating witness video download link: %s", str(e), exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to generate video download link: {str(e)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 
 async def download_witnesses_complete_video(
     job_no: int,

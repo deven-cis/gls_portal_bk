@@ -1,5 +1,5 @@
 from typing import List, Union
-from fastapi import APIRouter, Depends, File, Form, UploadFile, Query
+from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, Request
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from src.auth.utils import get_current_user
@@ -17,7 +17,8 @@ from src.witnesses.apis import (
     cancel_witness_video_upload,
     trigger_uploaded_video_cleanup,
     save_witness_and_videos,
-    delete_witness_by_id
+    delete_witness_by_id,
+    get_witness_video_download_link
 )
 from src.witnesses.schema import (
     CreateWitnessFrontSchema,
@@ -40,6 +41,17 @@ async def get_witnesses_list_by_job_endpoint(
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     return await get_witnesses_list_by_job(job_no, db)
+
+
+@witnesses_api.get("/videos/{video_id}/download-link", status_code=200)
+async def get_witness_video_download_link_endpoint(
+    video_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    base_url = str(request.base_url).rstrip("/")
+    return await get_witness_video_download_link(video_id, db, request_base_url=base_url)
 
 
 @witnesses_api.get("/{job_no}/download_witnesses_complete_video", status_code=200, response_model=None)

@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     FRONTEND_URL: str = "http://localhost:3000/"
 
+    # Storage / download URL strategy
+    # local: serve files from this API via /uploads
+    # s3/cdn: future-ready switch for object storage + CDN URLs
+    STORAGE_BACKEND: str = "local"
+    CDN_BASE_URL: str = ""
+    PUBLIC_API_BASE_URL: str = "http://127.0.0.1:8000"
+
     # RB9 Database (for data sync)
     RB9_DB_USER: str = "postgres"
     RB9_DB_PASSWORD: str = "admin123"

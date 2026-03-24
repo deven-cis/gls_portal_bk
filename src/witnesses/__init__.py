@@ -18,7 +18,8 @@ from src.witnesses.apis import (
     trigger_uploaded_video_cleanup,
     save_witness_and_videos,
     delete_witness_by_id,
-    get_witness_video_download_link
+    get_witness_video_download_link,
+    download_witness_video
 )
 from src.witnesses.schema import (
     CreateWitnessFrontSchema,
@@ -52,6 +53,15 @@ async def get_witness_video_download_link_endpoint(
 ) -> JSONResponse:
     base_url = str(request.base_url).rstrip("/")
     return await get_witness_video_download_link(video_id, db, request_base_url=base_url)
+
+
+@witnesses_api.get("/videos/{video_id}/download", status_code=200, response_model=None)
+async def download_witness_video_endpoint(
+    video_id: int,
+    token: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> Union[JSONResponse, FileResponse]:
+    return await download_witness_video(video_id, db, download_token=token)
 
 
 @witnesses_api.get("/{job_no}/download_witnesses_complete_video", status_code=200, response_model=None)

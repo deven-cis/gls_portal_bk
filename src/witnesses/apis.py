@@ -1,13 +1,14 @@
 from typing import Any, Dict, List, Optional, Union
 import json
 import uuid
-from datetime import timedelta, time as dt_time
+from jose import jwt
+from datetime import timedelta, time as dt_time, datetime
 from pathlib import Path
 from fastapi import HTTPException, status, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy import and_
 from sqlalchemy.orm import Session, joinedload, with_loader_criteria
-from src.core.context import get_context
+from src.core.context import get_context, set_context
 from src.core.logger import logger
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
@@ -35,10 +36,38 @@ from src.witnesses.schema import (
 )
 from src.core.config import config
 from src.core.storage_urls import build_video_download_url
+from src.core.rbac import get_current_user_role, is_admin_role
 from src.core.timezone_utils import get_timezone_now
 from src.jobs.models import Jobs
 from src.jobs_tasks.models import JobsTasks
 from src.cases.models import Cases
+
+
+def _create_video_download_token(video_id: int, rsrc_no: int) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=5)
+    payload = {
+        "video_id": video_id,
+        "rsrc_no": rsrc_no,
+        "type": "witness_video_download",
+        "exp": expire,
+    }
+    return jwt.encode(payload, config.SECRET_KEY, algorithm=config.ALGORITHM)
+
+
+def _decode_video_download_token(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(
+            token,
+            config.SECRET_KEY,
+            algorithms=[config.ALGORITHM],
+            options={"require_exp": True},
+        )
+        if payload.get("type") != "witness_video_download":
+            return None
+        return payload
+    except Exception:
+        return None
+
 
 def _normalize_time_string(value: Optional[str]) -> Optional[str]:
     if value is None:
@@ -693,6 +722,63 @@ async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
         )
 
 
+def _get_accessible_witness_video(video_id: int, db: Session):
+    current_rsrc_no = get_context("rsrc_no")
+    current_role = get_current_user_role()
+    if current_rsrc_no is None:
+        return None, JSONResponse(
+            content={
+                "status_code": status.HTTP_403_FORBIDDEN,
+                "message": "Unable to determine current resource context",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    query = (
+        db.query(WitnessVideos)
+        .join(Witnesses, WitnessVideos.wit_no == Witnesses.id)
+        .join(Jobs, WitnessVideos.job_no == Jobs.job_no)
+        .join(Cases, Jobs.case_no == Cases.case_no)
+        .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+        .filter(
+            WitnessVideos.id == video_id,
+            WitnessVideos.is_archived == False,
+            Witnesses.is_archived == False,
+            Jobs.is_archived == False,
+            Cases.is_archived == False,
+            JobsTasks.is_archived == False,
+        )
+    )
+
+    admin_access_enabled = is_admin_role(current_role)
+    if not admin_access_enabled:
+        query = query.filter(JobsTasks.rsrc_no == current_rsrc_no)
+    else:
+        logger.info(
+            "Admin witness video access enabled for user %s (%s) on video %s",
+            current_rsrc_no,
+            current_role,
+            video_id,
+        )
+
+    video = query.first()
+
+    if not video or not video.file_path:
+        return None, JSONResponse(
+            content={
+                "status_code": status.HTTP_404_NOT_FOUND,
+                "message": "Video not found or access denied",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    return video, None
+
+
 async def get_witness_video_download_link(
     video_id: int,
     db: Session,
@@ -704,47 +790,9 @@ async def get_witness_video_download_link(
     """
     try:
         current_rsrc_no = get_context("rsrc_no")
-        if current_rsrc_no is None:
-            return JSONResponse(
-                content={
-                    "status_code": status.HTTP_403_FORBIDDEN,
-                    "message": "Unable to determine current resource context",
-                    "success": False,
-                    "result": {},
-                },
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
-
-        video = (
-            db.query(WitnessVideos)
-            .join(Witnesses, WitnessVideos.wit_no == Witnesses.id)
-            .join(Jobs, WitnessVideos.job_no == Jobs.job_no)
-            .join(Cases, Jobs.case_no == Cases.case_no)
-            .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
-            .filter(
-                WitnessVideos.id == video_id,
-                WitnessVideos.is_archived == False,
-                Witnesses.is_archived == False,
-                Jobs.is_archived == False,
-                Cases.is_archived == False,
-                and_(
-                    JobsTasks.rsrc_no == current_rsrc_no,
-                    JobsTasks.is_archived == False,
-                ),
-            )
-            .first()
-        )
-
-        if not video or not video.file_path:
-            return JSONResponse(
-                content={
-                    "status_code": status.HTTP_404_NOT_FOUND,
-                    "message": "Video not found or access denied",
-                    "success": False,
-                    "result": {},
-                },
-                status_code=status.HTTP_404_NOT_FOUND,
-            )
+        video, error_response = _get_accessible_witness_video(video_id, db)
+        if error_response:
+            return error_response
 
         if not str(video.file_path).startswith(("http://", "https://")):
             if not Path(video.file_path).exists():
@@ -758,10 +806,9 @@ async def get_witness_video_download_link(
                     status_code=status.HTTP_404_NOT_FOUND,
                 )
 
-        download_url = build_video_download_url(
-            file_path=video.file_path,
-            request_base_url=request_base_url,
-        )
+        base_url = (request_base_url or '').rstrip('/')
+        download_token = _create_video_download_token(video.id, current_rsrc_no)
+        download_url = f"{base_url}/witnesses/videos/{video.id}/download?token={download_token}"
 
         return JSONResponse(
             content={
@@ -790,6 +837,107 @@ async def get_witness_video_download_link(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
+
+async def download_witness_video(
+    video_id: int,
+    db: Session,
+    download_token: Optional[str] = None,
+) -> Union[JSONResponse, FileResponse]:
+    try:
+        if not download_token:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Download token is required",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        token_payload = _decode_video_download_token(download_token)
+        if not token_payload:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Invalid or expired download token",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if int(token_payload.get("video_id") or 0) != int(video_id):
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Download token does not match requested video",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        set_context(rsrc_no=token_payload.get("rsrc_no"))
+        video, error_response = _get_accessible_witness_video(video_id, db)
+        if error_response:
+            return error_response
+
+        if str(video.file_path).startswith(("http://", "https://")):
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": "Remote video downloads are not supported by this endpoint",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        file_path = Path(video.file_path)
+        if not file_path.exists():
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Video file is missing on server",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        download_name = video.file_name or file_path.name
+        media_type = "application/octet-stream"
+        suffix = file_path.suffix.lower()
+        if suffix in {".mp4", ".m4v"}:
+            media_type = "video/mp4"
+        elif suffix == ".webm":
+            media_type = "video/webm"
+        elif suffix == ".mov":
+            media_type = "video/quicktime"
+        elif suffix == ".avi":
+            media_type = "video/x-msvideo"
+        elif suffix == ".mkv":
+            media_type = "video/x-matroska"
+
+        return FileResponse(
+            path=str(file_path),
+            filename=download_name,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={download_name}"
+            },
+        )
+    except Exception as e:
+        logger.error("Error downloading witness video: %s", str(e), exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to download video: {str(e)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 async def download_witnesses_complete_video(

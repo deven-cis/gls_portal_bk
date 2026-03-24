@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 from src.auth.utils import get_current_user
 from src.core.database import get_db
+from src.core.config import config
 from src.witnesses.apis import (
     get_witnesses_list_by_job,
     download_witnesses_complete_video,
@@ -51,7 +52,8 @@ async def get_witness_video_download_link_endpoint(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    base_url = str(request.base_url).rstrip("/")
+    configured_base_url = (config.PUBLIC_API_BASE_URL or "").strip().rstrip("/")
+    base_url = configured_base_url or str(request.base_url).rstrip("/")
     return await get_witness_video_download_link(video_id, db, request_base_url=base_url)
 
 

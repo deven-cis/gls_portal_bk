@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import UploadFile, HTTPException, status
 import aiofiles
+from src.core.config import config
 from src.core.logger import logger
 
 ALLOWED_EXTENSIONS = {'.docx', '.pdf'}
@@ -111,7 +112,7 @@ async def extract_video_metadata(file_path: str) -> Dict[str, Any]:
     probe_started_at = time.perf_counter()
     try:
         process = await asyncio.create_subprocess_exec(
-            "ffprobe",
+            config.RESOLVED_FFPROBE_PATH,
             "-v", "quiet",
             "-print_format", "json",
             "-show_format",
@@ -172,7 +173,8 @@ async def extract_video_metadata(file_path: str) -> Dict[str, Any]:
         return metadata
     except FileNotFoundError:
         logger.warning(
-            "ffprobe is not installed or not available in PATH (checked for %.2fs)",
+            "ffprobe is not installed or not available at '%s' (checked for %.2fs)",
+            config.RESOLVED_FFPROBE_PATH,
             time.perf_counter() - probe_started_at,
         )
         return {}

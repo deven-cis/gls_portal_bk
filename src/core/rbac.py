@@ -2,7 +2,7 @@ from typing import Optional
 from src.core.logger import logger
 from src.core.context import get_context
 ADMIN_ROLES = [
-    "1b. Staff: Videographers Georgia",
+    "1b. Staff:  Videographers Georgia",
 ]
 
 def get_current_user_role() -> Optional[str]:

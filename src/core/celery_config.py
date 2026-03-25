@@ -10,7 +10,7 @@ celery_app = Celery(
     backend=config.CELERY_RESULT_BACKEND
 )
 
-celery_app.autodiscover_tasks(['src.jobs', 'src.core.sync', 'src.uploaded_videos'])
+celery_app.autodiscover_tasks(['src.jobs', 'src.core.sync', 'src.uploaded_videos', 'src.witnesses'])
 
 
 celery_app.conf.update(

@@ -20,7 +20,11 @@ from src.witnesses.apis import (
     save_witness_and_videos,
     delete_witness_by_id,
     get_witness_video_download_link,
-    download_witness_video
+    download_witness_video,
+    request_witness_complete_video_merge,
+    get_witness_complete_video_status,
+    get_witness_complete_video_download_link,
+    download_witness_complete_video,
 )
 from src.witnesses.schema import (
     CreateWitnessFrontSchema,
@@ -64,6 +68,45 @@ async def download_witness_video_endpoint(
     db: Session = Depends(get_db),
 ) -> Union[JSONResponse, FileResponse]:
     return await download_witness_video(video_id, db, download_token=token)
+
+
+@witnesses_api.post("/{witness_id}/complete-video/request", status_code=202)
+async def request_witness_complete_video_merge_endpoint(
+    witness_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return await request_witness_complete_video_merge(witness_id, db)
+
+
+@witnesses_api.get("/{witness_id}/complete-video/status", status_code=200)
+async def get_witness_complete_video_status_endpoint(
+    witness_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return await get_witness_complete_video_status(witness_id, db)
+
+
+@witnesses_api.get("/{witness_id}/complete-video/download-link", status_code=200)
+async def get_witness_complete_video_download_link_endpoint(
+    witness_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    configured_base_url = (config.PUBLIC_API_BASE_URL or "").strip().rstrip("/")
+    base_url = configured_base_url or str(request.base_url).rstrip("/")
+    return await get_witness_complete_video_download_link(witness_id, db, request_base_url=base_url)
+
+
+@witnesses_api.get("/{witness_id}/complete-video/download", status_code=200, response_model=None)
+async def download_witness_complete_video_endpoint(
+    witness_id: int,
+    token: str | None = Query(None),
+    db: Session = Depends(get_db),
+) -> Union[JSONResponse, FileResponse]:
+    return await download_witness_complete_video(witness_id, db, download_token=token)
 
 
 @witnesses_api.get("/{job_no}/download_witnesses_complete_video", status_code=200, response_model=None)

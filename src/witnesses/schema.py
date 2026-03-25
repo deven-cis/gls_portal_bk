@@ -25,6 +25,14 @@ class WitnessSchema(BaseModel):
     read_on_time: Optional[time] = None
     read_off_text: str
     read_off_time: Optional[time] = None
+    merged_video_path: Optional[str] = None
+    merged_video_name: Optional[str] = None
+    merged_video_size: Optional[int] = None
+    merged_duration: Optional[float] = None
+    merge_status: Optional[str] = None
+    merge_error: Optional[str] = None
+    merge_requested_at: Optional[datetime] = None
+    merge_completed_at: Optional[datetime] = None
     witness_videos: List[WitnessVideoSchema] = Field(
         default_factory=list,
         validation_alias="witness_vid",

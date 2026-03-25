@@ -37,24 +37,48 @@ from src.witnesses.schema import (
 from src.core.config import config
 from src.core.storage_urls import build_video_download_url
 from src.core.rbac import get_current_user_role, is_admin_role
+from src.core.video_merge import build_witness_merged_video_output_path, delete_file_if_exists
+from src.core.celery_config import celery_app
 from src.core.timezone_utils import get_timezone_now
 from src.jobs.models import Jobs
 from src.jobs_tasks.models import JobsTasks
 from src.cases.models import Cases
 
 
-def _create_video_download_token(video_id: int, rsrc_no: int) -> str:
+def _create_download_token(*, token_type: str, rsrc_no: int, rsrc_role: Optional[str] = None, video_id: Optional[int] = None, witness_id: Optional[int] = None) -> str:
     expire = datetime.utcnow() + timedelta(minutes=5)
     payload = {
-        "video_id": video_id,
         "rsrc_no": rsrc_no,
-        "type": "witness_video_download",
+        "rsrc_role": rsrc_role,
+        "type": token_type,
         "exp": expire,
     }
+    if video_id is not None:
+        payload["video_id"] = video_id
+    if witness_id is not None:
+        payload["witness_id"] = witness_id
     return jwt.encode(payload, config.SECRET_KEY, algorithm=config.ALGORITHM)
 
 
-def _decode_video_download_token(token: str) -> Optional[dict]:
+def _create_video_download_token(video_id: int, rsrc_no: int, rsrc_role: Optional[str] = None) -> str:
+    return _create_download_token(
+        token_type="witness_video_download",
+        video_id=video_id,
+        rsrc_no=rsrc_no,
+        rsrc_role=rsrc_role,
+    )
+
+
+def _create_complete_video_download_token(witness_id: int, rsrc_no: int, rsrc_role: Optional[str] = None) -> str:
+    return _create_download_token(
+        token_type="witness_complete_video_download",
+        witness_id=witness_id,
+        rsrc_no=rsrc_no,
+        rsrc_role=rsrc_role,
+    )
+
+
+def _decode_download_token(token: str, expected_type: str) -> Optional[dict]:
     try:
         payload = jwt.decode(
             token,
@@ -62,11 +86,19 @@ def _decode_video_download_token(token: str) -> Optional[dict]:
             algorithms=[config.ALGORITHM],
             options={"require_exp": True},
         )
-        if payload.get("type") != "witness_video_download":
+        if payload.get("type") != expected_type:
             return None
         return payload
     except Exception:
         return None
+
+
+def _decode_video_download_token(token: str) -> Optional[dict]:
+    return _decode_download_token(token, "witness_video_download")
+
+
+def _decode_complete_video_download_token(token: str) -> Optional[dict]:
+    return _decode_download_token(token, "witness_complete_video_download")
 
 
 def _normalize_time_string(value: Optional[str]) -> Optional[str]:
@@ -722,6 +754,100 @@ async def get_witnesses_list_by_job(job_no: int, db: Session) -> JSONResponse:
         )
 
 
+def _get_accessible_witness(witness_id: int, db: Session):
+    current_rsrc_no = get_context("rsrc_no")
+    current_role = get_current_user_role()
+    if current_rsrc_no is None:
+        return None, JSONResponse(
+            content={
+                "status_code": status.HTTP_403_FORBIDDEN,
+                "message": "Unable to determine current resource context",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    query = (
+        db.query(Witnesses)
+        .join(Jobs, Witnesses.job_no == Jobs.job_no)
+        .join(Cases, Jobs.case_no == Cases.case_no)
+        .join(JobsTasks, JobsTasks.job_no == Jobs.job_no)
+        .filter(
+            Witnesses.id == witness_id,
+            Witnesses.is_archived == False,
+            Jobs.is_archived == False,
+            Cases.is_archived == False,
+            JobsTasks.is_archived == False,
+        )
+    )
+
+    if not is_admin_role(current_role):
+        query = query.filter(JobsTasks.rsrc_no == current_rsrc_no)
+
+    witness = query.first()
+    if not witness:
+        return None, JSONResponse(
+            content={
+                "status_code": status.HTTP_404_NOT_FOUND,
+                "message": "Witness not found or access denied",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    return witness, None
+
+
+def _build_witness_merge_result(witness: Witnesses) -> Dict[str, Any]:
+    return {
+        "witness_id": witness.id,
+        "job_no": witness.job_no,
+        "merge_status": witness.merge_status or "not_requested",
+        "merge_error": witness.merge_error,
+        "merge_requested_at": witness.merge_requested_at.isoformat() if witness.merge_requested_at else None,
+        "merge_completed_at": witness.merge_completed_at.isoformat() if witness.merge_completed_at else None,
+        "merged_video_name": witness.merged_video_name,
+        "merged_video_path": witness.merged_video_path,
+        "merged_video_size": int(witness.merged_video_size) if witness.merged_video_size is not None else None,
+        "merged_duration": float(witness.merged_duration) if witness.merged_duration is not None else None,
+    }
+
+
+def _reset_witness_merge_fields(
+    witness: Witnesses,
+    now: datetime,
+    modified_by: Optional[int],
+    *,
+    status_value: str = "not_requested",
+    error_message: Optional[str] = None,
+) -> Optional[str]:
+    previous_path = witness.merged_video_path
+    witness.merged_video_path = None
+    witness.merged_video_name = None
+    witness.merged_video_size = None
+    witness.merged_duration = None
+    witness.merge_status = status_value
+    witness.merge_error = error_message
+    witness.merge_requested_at = None if status_value == "not_requested" else witness.merge_requested_at
+    witness.merge_completed_at = None
+    witness.last_modified_at = now
+    if modified_by is not None:
+        witness.last_modified_by = modified_by
+    return previous_path
+
+
+def _mark_witness_merge_requested(witness: Witnesses, now: datetime, requested_by: Optional[int]) -> None:
+    witness.merge_status = "pending"
+    witness.merge_error = None
+    witness.merge_requested_at = now
+    witness.merge_completed_at = None
+    witness.last_modified_at = now
+    if requested_by is not None:
+        witness.last_modified_by = requested_by
+
+
 def _get_accessible_witness_video(video_id: int, db: Session):
     current_rsrc_no = get_context("rsrc_no")
     current_role = get_current_user_role()
@@ -790,6 +916,7 @@ async def get_witness_video_download_link(
     """
     try:
         current_rsrc_no = get_context("rsrc_no")
+        current_role = get_current_user_role()
         video, error_response = _get_accessible_witness_video(video_id, db)
         if error_response:
             return error_response
@@ -807,7 +934,7 @@ async def get_witness_video_download_link(
                 )
 
         base_url = (request_base_url or '').rstrip('/')
-        download_token = _create_video_download_token(video.id, current_rsrc_no)
+        download_token = _create_video_download_token(video.id, current_rsrc_no, current_role)
         download_url = f"{base_url}/witnesses/videos/{video.id}/download?token={download_token}"
 
         return JSONResponse(
@@ -877,7 +1004,7 @@ async def download_witness_video(
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        set_context(rsrc_no=token_payload.get("rsrc_no"))
+        set_context(rsrc_no=token_payload.get("rsrc_no"), rsrc_role=token_payload.get("rsrc_role"))
         video, error_response = _get_accessible_witness_video(video_id, db)
         if error_response:
             return error_response
@@ -940,6 +1067,291 @@ async def download_witness_video(
         )
 
 
+async def request_witness_complete_video_merge(
+    witness_id: int,
+    db: Session,
+) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        witness, error_response = _get_accessible_witness(witness_id, db)
+        if error_response:
+            return error_response
+
+        videos = (
+            db.query(WitnessVideos)
+            .filter(
+                WitnessVideos.wit_no == witness.id,
+                WitnessVideos.is_archived == False,
+            )
+            .all()
+        )
+        available_videos = [video for video in videos if video.file_path and Path(video.file_path).exists()]
+        if not available_videos:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": "No saved witness videos are available to merge",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if witness.merge_status == 'completed' and witness.merged_video_path and Path(witness.merged_video_path).exists():
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_200_OK,
+                    "message": "Merged witness video is already available",
+                    "success": True,
+                    "result": _build_witness_merge_result(witness),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+        if witness.merge_status in {'pending', 'processing'}:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_202_ACCEPTED,
+                    "message": "Witness complete video is already being generated",
+                    "success": True,
+                    "result": _build_witness_merge_result(witness),
+                },
+                status_code=status.HTTP_202_ACCEPTED,
+            )
+
+        stale_path = None
+        if witness.merged_video_path:
+            stale_path = _reset_witness_merge_fields(witness, now, current_rsrc_no)
+        _mark_witness_merge_requested(witness, now, current_rsrc_no)
+        db.add(witness)
+        db.commit()
+
+        if stale_path:
+            delete_file_if_exists(stale_path)
+
+        celery_app.send_task(
+            'src.witnesses.tasks.generate_witness_complete_video_task',
+            args=[witness.id, current_rsrc_no],
+        )
+        db.refresh(witness)
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_202_ACCEPTED,
+                "message": "Witness complete video generation started",
+                "success": True,
+                "result": _build_witness_merge_result(witness),
+            },
+            status_code=status.HTTP_202_ACCEPTED,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error('Failed to request witness complete video merge: %s', exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to request witness complete video merge: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def get_witness_complete_video_status(
+    witness_id: int,
+    db: Session,
+) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        witness, error_response = _get_accessible_witness(witness_id, db)
+        if error_response:
+            return error_response
+
+        if witness.merge_status == 'completed' and witness.merged_video_path and not Path(witness.merged_video_path).exists():
+            _reset_witness_merge_fields(witness, now, current_rsrc_no, status_value='not_requested', error_message=None)
+            db.add(witness)
+            db.commit()
+            db.refresh(witness)
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Witness complete video status retrieved successfully",
+                "success": True,
+                "result": _build_witness_merge_result(witness),
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except Exception as exc:
+        logger.error('Failed to get witness complete video status: %s', exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to get witness complete video status: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def get_witness_complete_video_download_link(
+    witness_id: int,
+    db: Session,
+    request_base_url: Optional[str] = None,
+) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        current_role = get_current_user_role()
+        witness, error_response = _get_accessible_witness(witness_id, db)
+        if error_response:
+            return error_response
+
+        if witness.merge_status != 'completed' or not witness.merged_video_path:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_409_CONFLICT,
+                    "message": "Merged witness video is not ready yet",
+                    "success": False,
+                    "result": _build_witness_merge_result(witness),
+                },
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
+        merged_path = Path(witness.merged_video_path)
+        if not merged_path.exists():
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Merged witness video file is missing on server",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        base_url = (request_base_url or '').rstrip('/')
+        download_token = _create_complete_video_download_token(witness.id, current_rsrc_no, current_role)
+        download_url = f"{base_url}/witnesses/{witness.id}/complete-video/download?token={download_token}"
+
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "Witness complete video download link generated successfully",
+                "success": True,
+                "result": {
+                    **_build_witness_merge_result(witness),
+                    "download_url": download_url,
+                    "file_name": witness.merged_video_name or merged_path.name,
+                },
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except Exception as exc:
+        logger.error('Failed to generate witness complete video download link: %s', exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to generate witness complete video download link: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+async def download_witness_complete_video(
+    witness_id: int,
+    db: Session,
+    download_token: Optional[str] = None,
+) -> Union[JSONResponse, FileResponse]:
+    try:
+        if not download_token:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Download token is required",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        token_payload = _decode_complete_video_download_token(download_token)
+        if not token_payload:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Invalid or expired download token",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+        if int(token_payload.get('witness_id') or 0) != int(witness_id):
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_403_FORBIDDEN,
+                    "message": "Download token does not match requested witness",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        set_context(rsrc_no=token_payload.get('rsrc_no'), rsrc_role=token_payload.get('rsrc_role'))
+        witness, error_response = _get_accessible_witness(witness_id, db)
+        if error_response:
+            return error_response
+
+        if witness.merge_status != 'completed' or not witness.merged_video_path:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_409_CONFLICT,
+                    "message": "Merged witness video is not ready yet",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
+        file_path = Path(witness.merged_video_path)
+        if not file_path.exists():
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Merged witness video file is missing on server",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        download_name = witness.merged_video_name or file_path.name
+        return FileResponse(
+            path=str(file_path),
+            filename=download_name,
+            media_type='video/mp4',
+            headers={
+                'Content-Disposition': f'attachment; filename={download_name}'
+            },
+        )
+    except Exception as exc:
+        logger.error('Failed to download witness complete video: %s', exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to download witness complete video: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 async def download_witnesses_complete_video(
     job_no: int,
     witness_id: int,
@@ -947,30 +1359,7 @@ async def download_witnesses_complete_video(
     db: Session,
 ) -> Union[JSONResponse, FileResponse]:
     try:
-        from src.jobs.apis import get_witnesses_with_videos
-        from src.jobs.apis import merge_videos_ffmpeg
-        
-        witnesses = get_witnesses_with_videos(job_no, db, witness_id=witness_id)
-        if download_all:
-            logger.info(f"Downloading witnesses complete video for job_no {job_no}")
-            video_paths = []
-            for witness in witnesses:
-                for video in witness.witness_vid:
-                    if video.file_path and Path(video.file_path).exists():
-                        video_paths.append(video.file_path)
-                
-                merged_file_path = merge_videos_ffmpeg(video_paths, job_no)
-                merged_filename = merged_file_path.name
-                
-                return FileResponse(
-                    path=str(merged_file_path),
-                    filename=merged_filename,
-                    media_type='video/mp4',
-                    headers={
-                        "Content-Disposition": f"attachment; filename={merged_filename}"
-                    }
-                )
-        else:
+        if not download_all:
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_400_BAD_REQUEST,
@@ -980,12 +1369,58 @@ async def download_witnesses_complete_video(
                 },
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-    except Exception as e:
-        logger.error(f"Error downloading witnesses complete video: {str(e)}", exc_info=True)
+
+        witness, error_response = _get_accessible_witness(witness_id, db)
+        if error_response:
+            return error_response
+        if int(witness.job_no) != int(job_no):
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_400_BAD_REQUEST,
+                    "message": "Witness does not belong to the requested job",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if witness.merge_status != 'completed' or not witness.merged_video_path:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_409_CONFLICT,
+                    "message": "Merged witness video is not ready yet",
+                    "success": False,
+                    "result": _build_witness_merge_result(witness),
+                },
+                status_code=status.HTTP_409_CONFLICT,
+            )
+
+        merged_path = Path(witness.merged_video_path)
+        if not merged_path.exists():
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Merged witness video file is missing on server",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        file_name = witness.merged_video_name or merged_path.name
+        return FileResponse(
+            path=str(merged_path),
+            filename=file_name,
+            media_type='video/mp4',
+            headers={
+                'Content-Disposition': f'attachment; filename={file_name}'
+            },
+        )
+    except Exception as exc:
+        logger.error('Error downloading witnesses complete video: %s', exc, exc_info=True)
         return JSONResponse(
             content={
                 "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "message": f"Failed to download witnesses complete video: {str(e)}",
+                "message": f"Failed to download witnesses complete video: {str(exc)}",
                 "success": False,
                 "result": {},
             },
@@ -1184,6 +1619,8 @@ async def save_witness_and_videos(
     try:
         current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
+        video_structure_changed = False
+        merge_artifact_to_delete = None
 
         if not data.witness_id:
             logger.error("Witness ID is required for save/update")
@@ -1288,6 +1725,7 @@ async def save_witness_and_videos(
                     ev.is_archived = True
                     ev.last_modified_at = now
                     ev.last_modified_by = current_rsrc_no
+                    video_structure_changed = True
 
         # Process video items
         for item in data.videos:
@@ -1306,6 +1744,7 @@ async def save_witness_and_videos(
                     vid.is_archived = True
                     vid.last_modified_at = now
                     vid.last_modified_by = current_rsrc_no
+                    video_structure_changed = True
                 continue
 
             # Update existing video
@@ -1332,6 +1771,8 @@ async def save_witness_and_videos(
                     update_vid["end_time"] = _normalize_time_string(item.end_time)
 
                 item_dict = item.model_dump(exclude_unset=True)
+                if item.start_time is not None or item.end_time is not None or item.upload_token or 'file_index' in item_dict:
+                    video_structure_changed = True
                 if item.upload_token:
                     upload_data = _consume_completed_upload(
                         item.upload_token,
@@ -1373,6 +1814,7 @@ async def save_witness_and_videos(
                     if item.file_index is not None and 0 <= item.file_index < len(files)
                     else (None, None, {})
                 )
+            video_structure_changed = True
             new_vid = WitnessVideos(
                 wit_no=witness.id,
                 job_no=witness.job_no,
@@ -1405,10 +1847,15 @@ async def save_witness_and_videos(
                 new_vid.duration_seconds = upload_data.get("duration_seconds")
                 new_vid.timecode = upload_data.get("timecode")
 
+        if video_structure_changed:
+            merge_artifact_to_delete = _reset_witness_merge_fields(witness, now, current_rsrc_no)
+
         witness.last_modified_at = now
         witness.last_modified_by = current_rsrc_no
         db.add(witness)
         db.commit()
+        if merge_artifact_to_delete:
+            delete_file_if_exists(merge_artifact_to_delete)
         db.refresh(witness)
 
         # Fetch final witness with videos
@@ -1485,6 +1932,8 @@ async def delete_witness_by_id(witness_id: int, db: Session) -> JSONResponse:
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
+        merged_file_to_delete = witness.merged_video_path
+
         # Bulk archive associated videos
         archived_videos = db.query(WitnessVideos).filter(
             WitnessVideos.wit_no == witness_id,
@@ -1504,6 +1953,8 @@ async def delete_witness_by_id(witness_id: int, db: Session) -> JSONResponse:
         witness.last_modified_by = current_rsrc_no
         db.add(witness)
         db.commit()
+        if merged_file_to_delete:
+            delete_file_if_exists(merged_file_to_delete)
 
         logger.info(f"Witness {witness_id} and {archived_videos} video(s) archived successfully")
         return JSONResponse(

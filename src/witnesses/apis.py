@@ -1078,6 +1078,23 @@ async def request_witness_complete_video_merge(
         if error_response:
             return error_response
 
+        witness = (
+            db.query(Witnesses)
+            .filter(Witnesses.id == witness.id)
+            .with_for_update()
+            .first()
+        )
+        if not witness:
+            return JSONResponse(
+                content={
+                    "status_code": status.HTTP_404_NOT_FOUND,
+                    "message": "Witness not found or access denied",
+                    "success": False,
+                    "result": {},
+                },
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
         videos = (
             db.query(WitnessVideos)
             .filter(

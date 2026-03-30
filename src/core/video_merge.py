@@ -306,38 +306,6 @@ def _merge_compatible_videos(
             shutil.rmtree(working_dir, ignore_errors=True)
 
 
-def _matches_normalized_target(
-    ffprobe_path: str,
-    source_path: Path,
-    *,
-    target_width: int,
-    target_height: int,
-) -> bool:
-    try:
-        profile = _probe_concat_profile(ffprobe_path, source_path)
-    except Exception as exc:
-        logger.info("Could not probe normalized-target compatibility for %s: %s", source_path, exc)
-        return False
-
-    target_profile = {
-        "video_codec": "h264",
-        "pixel_format": "yuv420p",
-        "width": target_width,
-        "height": target_height,
-        "fps": 30.0,
-        "has_audio": True,
-        "audio_codec": "aac",
-        "sample_rate": "48000",
-        "channels": 2,
-    }
-
-    for key, expected in target_profile.items():
-        if profile.get(key) != expected:
-            return False
-
-    return True
-
-
 def _normalize_clip_for_concat(
     ffmpeg_path: str,
     ffprobe_path: str,
@@ -476,16 +444,6 @@ def merge_video_files_ffmpeg(
         normalized_paths: List[Path] = []
 
         for index, source_path in enumerate(valid_paths, start=1):
-            if _matches_normalized_target(
-                ffprobe_path,
-                source_path,
-                target_width=target_width,
-                target_height=target_height,
-            ):
-                logger.info("Reusing already-normalized clip for merge: %s", source_path)
-                normalized_paths.append(source_path)
-                continue
-
             normalized_path = normalized_dir / f"clip_{index:03d}.mp4"
             _normalize_clip_for_concat(
                 ffmpeg_path,

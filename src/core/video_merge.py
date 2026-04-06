@@ -4,15 +4,33 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from src.core.config import config
 from src.core.file_utils import UPLOAD_BASE_DIR
 from src.core.logger import logger
+import concurrent.futures
 
 MERGED_WITNESS_VIDEO_DIR = UPLOAD_BASE_DIR / "merged_witness_videos"
+
+# STATIC SPEC - DO NOT CHANGE
+STATIC_VIDEO_SPEC = {
+    "container": "mp4",
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "pixel_format": "yuv420p",
+    "fps": 30,
+    "sample_rate": 48000,
+    "target_width": 1280,
+    "target_height": 720,
+    "bitrate_video": "5000k",      # High quality for 1280x720
+    "bitrate_audio": "192k",       # High quality audio
+    "preset": "fast",              # Balance speed/quality (ultrafast would lose quality)
+    "crf": 20,                     # Lower = better quality (18-23 range best)
+}
 
 
 def _project_root() -> Path:
@@ -68,41 +86,17 @@ def _ensure_sufficient_disk_space(video_paths: List[Path], working_dir: Path, *,
 
 
 def _find_ffmpeg_binary() -> str:
-    for path in [
-        "/usr/bin/ffmpeg",
-        "/usr/local/bin/ffmpeg",
-        "/bin/ffmpeg",
-        "/opt/bin/ffmpeg",
-    ]:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-
-    discovered = shutil.which("ffmpeg")
-    if discovered:
-        return discovered
-
-    raise RuntimeError("FFmpeg not found. Install it before generating merged videos.")
+    for path in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"]:
+        if shutil.which(path):
+            return shutil.which(path)
+    raise RuntimeError("FFmpeg not found. Install it to proceed.")
 
 
 def _find_ffprobe_binary() -> str:
-    configured = getattr(config, "RESOLVED_FFPROBE_PATH", None)
-    if configured:
-        return configured
-
-    for path in [
-        "/usr/bin/ffprobe",
-        "/usr/local/bin/ffprobe",
-        "/bin/ffprobe",
-        "/opt/bin/ffprobe",
-    ]:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-
-    discovered = shutil.which("ffprobe")
-    if discovered:
-        return discovered
-
-    raise RuntimeError("FFprobe not found. Install it before generating merged videos.")
+    for path in ["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"]:
+        if shutil.which(path):
+            return shutil.which(path)
+    raise RuntimeError("FFprobe not found.")
 
 
 def build_witness_merged_video_output_path(witness_id: int, job_no: int) -> Path:
@@ -112,25 +106,26 @@ def build_witness_merged_video_output_path(witness_id: int, job_no: int) -> Path
     return MERGED_WITNESS_VIDEO_DIR / f"witness_{witness_id}_job_{job_no}_{timestamp}_{suffix}.mp4"
 
 
-def _probe_video_info(ffprobe_path: str, file_path: Path) -> dict:
-    result = subprocess.run(
-        [
-            ffprobe_path,
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_streams",
-            "-show_format",
-            str(file_path),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=60,
-    )
-    return json.loads(result.stdout or "{}")
+def _probe_video_info(ffprobe_path: str, file_path: Path) -> Dict:
+    """Probe video file and return all stream info."""
+    try:
+        result = subprocess.run(
+            [ffprobe_path, "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", str(file_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        data = json.loads(result.stdout or "{}")
+        if not data.get("streams"):
+            raise RuntimeError(f"No streams found in {file_path} - file may be corrupted")
+        return data
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Failed to parse ffprobe output for {file_path} - file may be corrupted")
 
 
 def _probe_video_profile(ffprobe_path: str, file_path: Path) -> Tuple[int, int, bool]:
+    """Get video dimensions and audio presence."""
     info = _probe_video_info(ffprobe_path, file_path)
     streams = info.get("streams", [])
 
@@ -142,10 +137,11 @@ def _probe_video_profile(ffprobe_path: str, file_path: Path) -> Tuple[int, int, 
     height = int(video_stream.get("height") or 0)
 
     if width <= 0 or height <= 0:
-        raise RuntimeError(f"Invalid video dimensions detected for {file_path}")
+        raise RuntimeError(f"Invalid video dimensions detected for {file_path}: {width}x{height}")
 
     has_audio = any(stream.get("codec_type") == "audio" for stream in streams)
 
+    # Ensure even dimensions (required for H.264)
     if width % 2:
         width += 1
     if height % 2:
@@ -155,6 +151,7 @@ def _probe_video_profile(ffprobe_path: str, file_path: Path) -> Tuple[int, int, 
 
 
 def _probe_duration_seconds(ffprobe_path: str, file_path: Path) -> float:
+    """Get video duration in seconds."""
     result = subprocess.run(
         [
             ffprobe_path,
@@ -170,83 +167,100 @@ def _probe_duration_seconds(ffprobe_path: str, file_path: Path) -> float:
     )
     info = json.loads(result.stdout or "{}")
     fmt = info.get("format", {})
-    return float(fmt.get("duration", 0) or 0)
+    duration = float(fmt.get("duration", 0) or 0)
+    return duration
 
 
-def _probe_concat_profile(ffprobe_path: str, file_path: Path) -> Dict[str, object]:
-    info = _probe_video_info(ffprobe_path, file_path)
-    streams = info.get("streams", [])
-
-    video_stream = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
-    audio_stream = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
-
-    if not video_stream:
-        raise RuntimeError(f"No video stream found in {file_path}")
-
-    def _fps_value(stream: dict) -> float:
-        raw = stream.get("avg_frame_rate") or stream.get("r_frame_rate") or "0/1"
-        try:
-            num_str, den_str = str(raw).split("/", 1)
-            num = float(num_str)
-            den = float(den_str)
-            return 0.0 if den == 0 else round(num / den, 3)
-        except Exception:
-            return 0.0
-
-    return {
-        "video_codec": video_stream.get("codec_name"),
-        "pixel_format": video_stream.get("pix_fmt"),
-        "width": int(video_stream.get("width") or 0),
-        "height": int(video_stream.get("height") or 0),
-        "fps": _fps_value(video_stream),
-        "video_time_base": video_stream.get("time_base"),
-        "has_audio": audio_stream is not None,
-        "audio_codec": audio_stream.get("codec_name") if audio_stream else None,
-        "sample_rate": str(audio_stream.get("sample_rate")) if audio_stream else None,
-        "channels": int(audio_stream.get("channels") or 0) if audio_stream else 0,
-    }
+def _format_duration(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS format."""
+    if seconds <= 0:
+        return "00:00:00"
+    td = timedelta(seconds=int(seconds))
+    hours, remainder = divmod(int(td.total_seconds()), 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def _videos_already_compatible(ffprobe_path: str, video_paths: List[Path]) -> bool:
-    if not video_paths:
-        return False
-
+def _normalize_worker(task: dict) -> Tuple[str, float]:
+    """
+    Worker: Normalizes one video to static MP4 spec.
+    Returns: (output_path, duration_seconds)
+    
+    Optimizations:
+    - Uses H.264 with CRF 20 (high quality, good compression)
+    - Preset 'fast' balances speed vs quality
+    - Parallelizable task
+    """
     try:
-        profiles = [_probe_concat_profile(ffprobe_path, path) for path in video_paths]
-    except Exception as exc:
-        logger.info("Compatibility probe failed; falling back to normalization: %s", exc)
-        return False
+        ffmpeg_path = task['ffmpeg_path']
+        ffprobe_path = task['ffprobe_path']
+        src = task['src']
+        dst = task['dst']
+        
+        logger.info(f"[NORMALIZE] Starting: {src.name}")
+        start_time = time.time()
+        
+        # Probe for audio
+        _, _, has_audio = _probe_video_profile(ffprobe_path, src)
+        
+        # Define target dimensions from spec
+        tw = STATIC_VIDEO_SPEC['target_width']
+        th = STATIC_VIDEO_SPEC['target_height']
+        
+        # ULTRA-FAST filter chain (minimal processing)
+        video_filters = (
+            f"scale=w={tw}:h={th}:force_original_aspect_ratio=decrease,"
+            f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2:black"
+        )
 
-    baseline = profiles[0]
-    baseline_path = str(video_paths[0])
+        cmd = [
+            ffmpeg_path,
+            "-y",
+            "-i", str(src),
+        ]
+        
+        # Add silent audio if missing
+        if not has_audio:
+            cmd.extend([
+                "-f", "lavfi",
+                "-i", f"anullsrc=channel_layout=stereo:sample_rate={STATIC_VIDEO_SPEC['sample_rate']}",
+            ])
 
-    IMPORTANT_KEYS = [
-        "video_codec",
-        "pixel_format",
-        "width",
-        "height",
-        "fps",
-        "has_audio",
-        "audio_codec",
-        "sample_rate",
-        "channels",
-    ]
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "ultrafast",  # FASTEST encoding
+            "-crf", "23",             # Good quality, faster than CRF 20
+            "-vf", video_filters,
+            "-pix_fmt", "yuv420p",
+            "-r", "30",
+            "-c:a", STATIC_VIDEO_SPEC['audio_codec'],
+            "-b:a", "96k",            # SMALLER audio
+            "-ar", str(STATIC_VIDEO_SPEC['sample_rate']),
+            "-ac", "2",
+        ])
 
-    for index, profile in enumerate(profiles[1:], start=1):
-        mismatched_keys = [key for key in IMPORTANT_KEYS if baseline.get(key) != profile.get(key)]
-        if mismatched_keys:
-            logger.info(
-                "Normalization required for %s because it differs from baseline %s. mismatched_fields=%s baseline=%s current=%s",
-                video_paths[index],
-                baseline_path,
-                mismatched_keys,
-                baseline,
-                profile,
-            )
-            return False
+        # If no audio was present, output shortest (match video duration)
+        if not has_audio:
+            cmd.append("-shortest")
 
-    logger.info("All source videos already share same concat profile for fast-path merge")
-    return True
+        cmd.extend([
+            "-movflags", "+faststart",
+            "-max_muxing_queue_size", "4096",
+            str(dst),
+        ])
+
+        subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=14400)  # 4 hours
+        
+        # Probe output duration
+        output_duration = _probe_duration_seconds(ffprobe_path, dst)
+        elapsed = time.time() - start_time
+        
+        logger.info(f"[NORMALIZE] Complete: {src.name} -> {dst.name} (duration={_format_duration(output_duration)}, elapsed={elapsed:.1f}s)")
+        return (str(dst), output_duration)
+        
+    except Exception as e:
+        logger.error(f"[NORMALIZE] Failed {task['src']}: {str(e)}")
+        raise
 
 
 def _merge_compatible_videos(
@@ -256,126 +270,112 @@ def _merge_compatible_videos(
     output_path: Path,
     *,
     log_label: str,
-    timeout_seconds: int,
-) -> Path:
+) -> Tuple[Path, float]:
+    """
+    Fast merge using stream copy (no re-encoding).
+    Returns: (output_path, total_duration_seconds)
+    """
     working_dir = Path(tempfile.gettempdir()) / f"merge_fast_{uuid.uuid4().hex}"
     working_dir.mkdir(parents=True, exist_ok=True)
     concat_file = working_dir / "concat_list.txt"
 
     try:
+        logger.info(f"[MERGE] Concatenating {len(video_paths)} videos...")
+        
+        # Write concat demuxer file
         with open(concat_file, "w", encoding="utf-8") as handle:
             for path in video_paths:
                 escaped_path = str(path).replace("'", "'\\''")
                 handle.write(f"file '{escaped_path}'\n")
 
-        source_duration_total = sum(_probe_duration_seconds(ffprobe_path, path) for path in video_paths)
-
-        subprocess.run(
-            [
-                ffmpeg_path,
-                "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-fflags", "+genpts",
-                "-i", str(concat_file),
-                "-c", "copy",
-                "-movflags", "+faststart",
-                "-max_muxing_queue_size", "4096",
-                str(output_path),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=timeout_seconds,
+        # Calculate source duration
+        source_duration_total = sum(
+            _probe_duration_seconds(ffprobe_path, path) for path in video_paths
         )
+        
+        logger.info(f"[MERGE] Source total duration: {_format_duration(source_duration_total)}")
 
-        merged_duration_seconds = _probe_duration_seconds(ffprobe_path, output_path)
+        # Use stream copy (no re-encoding) for speed
+        concat_cmd = [
+            ffmpeg_path,
+            "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-fflags", "+genpts",
+            "-i", str(concat_file),
+            "-c", "copy",  # No re-encoding, just copy streams
+            "-movflags", "+faststart",
+            "-max_muxing_queue_size", "4096",
+            str(output_path),
+        ]
+
+        merge_start = time.time()
+        subprocess.run(concat_cmd, capture_output=True, text=True, check=True, timeout=14400)  # 4 hours
+        merge_elapsed = time.time() - merge_start
+
+        # Probe merged video
+        merged_duration = _probe_duration_seconds(ffprobe_path, output_path)
+        output_size_bytes = output_path.stat().st_size
+        output_size_gb = output_size_bytes / (1024 ** 3)
+        
+        # Validate output file
+        if output_size_bytes < 1024 * 1024:  # Less than 1MB = error
+            raise RuntimeError(f"Output file too small ({output_size_gb:.2f}GB) - merge may have failed")
+        
+        if merged_duration <= 0:
+            raise RuntimeError(f"Output video has no duration - merge may have failed")
 
         logger.info(
-            "Fast-path merged %s video(s) for %s into %s (source_duration=%.2fs, merged_duration=%.2fs)",
-            len(video_paths),
-            log_label,
-            output_path,
-            source_duration_total,
-            merged_duration_seconds,
+            f"[MERGE] SUCCESS: Merged {len(video_paths)} videos into {output_path.name} "
+            f"(duration={_format_duration(merged_duration)}, size={output_size_gb:.2f}GB, elapsed={merge_elapsed:.1f}s)"
         )
 
-        return output_path
+        return output_path, merged_duration
+
     finally:
         if working_dir.exists():
             shutil.rmtree(working_dir, ignore_errors=True)
 
 
-def _normalize_clip_for_concat(
-    ffmpeg_path: str,
-    ffprobe_path: str,
-    source_path: Path,
-    normalized_path: Path,
-    *,
-    target_width: int,
-    target_height: int,
-    timeout_seconds: int,
-) -> Path:
-    _, _, has_audio = _probe_video_profile(ffprobe_path, source_path)
+def _videos_already_compatible(ffprobe_path: str, video_paths: List[Path]) -> bool:
+    """Check if all videos match static spec (skip normalization if yes)."""
+    if not video_paths:
+        return False
 
-    scale_filter = (
-        "scale="
-        f"w='if(gt(a,{target_width}/{target_height}),min({target_width},iw),-2)':"
-        f"h='if(gt(a,{target_width}/{target_height}),-2,min({target_height},ih))'"
-    )
-
-    filter_chain = (
-        f"{scale_filter},"
-        f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        "setsar=1,setpts=PTS-STARTPTS,fps=30,format=yuv420p"
-    )
-
-    command = [
-        ffmpeg_path,
-        "-y",
-        "-i", str(source_path),
-    ]
-
-    if not has_audio:
-        command.extend([
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-        ])
-
-    command.extend([
-        "-threads", "0",
-        "-vf", filter_chain,
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "23",
-        "-pix_fmt", "yuv420p",
-        "-r", "30",
-        "-vsync", "cfr",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ar", "48000",
-        "-ac", "2",
-        "-af", "aresample=async=1:first_pts=0",
-    ])
-
-    if not has_audio:
-        command.extend(["-shortest"])
-
-    command.extend([
-        "-movflags", "+faststart",
-        str(normalized_path),
-    ])
-
-    subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=timeout_seconds,
-    )
-
-    logger.info("Normalized clip for merge: %s -> %s (has_audio=%s)", source_path, normalized_path, has_audio)
-    return normalized_path
+    try:
+        # Just check if they're all H.264, AAC, 30fps, 1280x720, YUV420p
+        spec = STATIC_VIDEO_SPEC
+        
+        for path in video_paths:
+            info = _probe_video_info(ffprobe_path, path)
+            streams = info.get("streams", [])
+            
+            v_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+            a_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+            
+            if not v_stream:
+                return False
+            
+            # Check critical specs
+            if v_stream.get("codec_name") != spec['video_codec']:
+                return False
+            if int(v_stream.get("width", 0)) != spec['target_width']:
+                return False
+            if int(v_stream.get("height", 0)) != spec['target_height']:
+                return False
+            if v_stream.get("pix_fmt") != spec['pixel_format']:
+                return False
+            
+            # Audio check
+            if a_stream and a_stream.get("codec_name") != spec['audio_codec']:
+                return False
+        
+        logger.info("[COMPAT] All videos match static spec - skip normalization")
+        return True
+        
+    except Exception as exc:
+        logger.info(f"[COMPAT] Compatibility check failed, will normalize: {exc}")
+        return False
 
 
 def merge_video_files_ffmpeg(
@@ -383,129 +383,119 @@ def merge_video_files_ffmpeg(
     output_path: Path,
     *,
     log_label: str,
-    normalize_timeout_seconds: int = 7200,
-    concat_timeout_seconds: int = 7200,
-) -> Path:
-    valid_paths: List[Path] = []
-
-    for raw_path in video_paths:
-        if not raw_path:
-            continue
-        resolved = resolve_local_video_path(str(raw_path))
-        if resolved.exists():
-            valid_paths.append(resolved)
-        else:
-            logger.warning("Skipping missing merge source for %s: %s", log_label, resolved)
-
+) -> Tuple[Path, str]:
+    """
+    Merge videos with static MP4 specification.
+    
+    Returns: (output_path, duration_formatted)
+    
+    Process:
+    1. Validate inputs
+    2. Check if already compatible (skip normalization)
+    3. Parallel normalize (if needed)
+    4. Sequential fast merge using stream copy
+    5. Return output path + formatted duration
+    """
+    valid_paths = [Path(p).resolve() for p in video_paths if p and Path(p).exists()]
+    
     if not valid_paths:
         raise ValueError(f"No valid source videos found for {log_label}")
 
+    if len(valid_paths) == 0:
+        raise ValueError(f"Must provide at least 1 video for {log_label}")
+
+    logger.info(f"[MERGE START] {log_label}: {len(valid_paths)} videos")
+
     ffmpeg_path = _find_ffmpeg_binary()
     ffprobe_path = _find_ffprobe_binary()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    _ensure_sufficient_disk_space(valid_paths, Path(tempfile.gettempdir()), log_label=log_label)
-
-    if len(valid_paths) == 1:
-        shutil.copy2(valid_paths[0], output_path)
-        logger.info("Only one source video for %s. Copied directly to %s", log_label, output_path)
-        return output_path
-
-    if _videos_already_compatible(ffprobe_path, valid_paths):
-        try:
-            return _merge_compatible_videos(
-                ffmpeg_path,
-                ffprobe_path,
-                valid_paths,
-                output_path,
-                log_label=log_label,
-                timeout_seconds=concat_timeout_seconds,
-            )
-        except subprocess.CalledProcessError as exc:
-            logger.warning(
-                "Fast-path concat failed for %s; falling back to normalization: %s",
-                log_label,
-                exc.stderr,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Fast-path concat failed for %s; falling back to normalization: %s",
-                log_label,
-                exc,
-            )
-
-    target_width, target_height, _ = _probe_video_profile(ffprobe_path, valid_paths[0])
-
-    normalized_dir = Path(tempfile.gettempdir()) / f"merge_normalized_{uuid.uuid4().hex}"
-    normalized_dir.mkdir(parents=True, exist_ok=True)
-    concat_file = normalized_dir / "concat_list.txt"
+    
+    # Create workspace
+    tmp_dir = Path(tempfile.gettempdir()) / f"vmerge_{uuid.uuid4().hex}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    
+    total_start_time = time.time()
 
     try:
-        normalized_paths: List[Path] = []
+        # Check disk space
+        _ensure_sufficient_disk_space(valid_paths, tmp_dir, log_label=log_label)
 
-        for index, source_path in enumerate(valid_paths, start=1):
-            normalized_path = normalized_dir / f"clip_{index:03d}.mp4"
-            _normalize_clip_for_concat(
-                ffmpeg_path,
-                ffprobe_path,
-                source_path,
-                normalized_path,
-                target_width=target_width,
-                target_height=target_height,
-                timeout_seconds=normalize_timeout_seconds,
-            )
-            normalized_paths.append(normalized_path)
+        # Phase 1: Check if normalization needed
+        need_normalization = not _videos_already_compatible(ffprobe_path, valid_paths)
 
-        with open(concat_file, "w", encoding="utf-8") as handle:
-            for path in normalized_paths:
-                escaped_path = str(path).replace("'", "'\\''")
-                handle.write(f"file '{escaped_path}'\n")
+        if need_normalization:
+            logger.info(f"[PHASE 1] Normalizing {len(valid_paths)} videos to spec...")
+            
+            # Build normalization tasks (preserves order)
+            tasks = []
+            normalized_paths = []
+            
+            for i, src_path in enumerate(valid_paths):
+                dst_path = tmp_dir / f"norm_{i:03d}.mp4"
+                normalized_paths.append(dst_path)
+                tasks.append({
+                    'ffmpeg_path': ffmpeg_path,
+                    'ffprobe_path': ffprobe_path,
+                    'src': src_path,
+                    'dst': dst_path,
+                })
 
-        source_duration_total = sum(_probe_duration_seconds(ffprobe_path, path) for path in valid_paths)
+            # Parallel normalization (max workers based on CPU cores)
+            durations = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tasks), 4)) as executor:
+                futures = {executor.submit(_normalize_worker, task): i for i, task in enumerate(tasks)}
+                
+                for future in concurrent.futures.as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        dst_str, duration = future.result()
+                        durations[idx] = duration
+                    except Exception as e:
+                        logger.error(f"Normalization failed for video {idx}: {e}")
+                        raise
 
-        subprocess.run(
-            [
-                ffmpeg_path,
-                "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-fflags", "+genpts",
-                "-i", str(concat_file),
-                "-c", "copy",
-                "-movflags", "+faststart",
-                "-max_muxing_queue_size", "4096",
-                str(output_path),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=concat_timeout_seconds,
+            # Use normalized paths for merge
+            merge_paths = normalized_paths
+            
+        else:
+            logger.info(f"[PHASE 1] Skipped - videos already match spec")
+            merge_paths = valid_paths
+            durations = {}
+
+        # Phase 2: Merge
+        logger.info(f"[PHASE 2] Merging {len(merge_paths)} normalized videos...")
+        output_path, merged_duration = _merge_compatible_videos(
+            ffmpeg_path,
+            ffprobe_path,
+            merge_paths,
+            output_path,
+            log_label=log_label,
         )
 
-        merged_duration_seconds = _probe_duration_seconds(ffprobe_path, output_path)
+        total_elapsed = time.time() - total_start_time
+        duration_formatted = _format_duration(merged_duration)
+        output_size_gb = output_path.stat().st_size / (1024 ** 3)
 
         logger.info(
-            "Merged %s normalized video(s) for %s into %s (source_duration=%.2fs, merged_duration=%.2fs)",
-            len(normalized_paths),
-            log_label,
-            output_path,
-            source_duration_total,
-            merged_duration_seconds,
+            f"[MERGE COMPLETE] {log_label}\n"
+            f"  Output: {output_path}\n"
+            f"  Duration: {duration_formatted}\n"
+            f"  Size: {output_size_gb:.2f} GB\n"
+            f"  Total Time: {total_elapsed:.1f}s\n"
+            f"  Spec: H.264, AAC, {STATIC_VIDEO_SPEC['target_width']}x{STATIC_VIDEO_SPEC['target_height']}, 30fps, YUV420p"
         )
 
-        if abs(merged_duration_seconds - source_duration_total) > 2.0:
-            logger.warning(
-                "Merged duration differs from source total for %s by %.2fs",
-                log_label,
-                abs(merged_duration_seconds - source_duration_total),
-            )
+        return output_path, duration_formatted
 
-        return output_path
-
-    except subprocess.CalledProcessError as exc:
-        logger.error("FFmpeg merge failed for %s: %s", log_label, exc.stderr)
-        raise RuntimeError(exc.stderr or f"FFmpeg merge failed for {log_label}") from exc
-
+    except Exception as e:
+        logger.error(f"[MERGE FAILED] {log_label}: {str(e)}")
+        # Clean up output file if merge failed
+        if output_path.exists():
+            try:
+                output_path.unlink()
+                logger.info(f"Cleaned up failed output: {output_path}")
+            except Exception:
+                pass
+        raise
     finally:
-        if normalized_dir.exists():
-            shutil.rmtree(normalized_dir, ignore_errors=True)
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)

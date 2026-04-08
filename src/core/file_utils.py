@@ -9,6 +9,7 @@ from fastapi import UploadFile, HTTPException, status
 import aiofiles
 from src.core.config import config
 from src.core.logger import logger
+from src.core.storage_prefixes import attorney_prefix, billing_prefix, equipment_time_prefix
 
 ALLOWED_EXTENSIONS = {'.docx', '.pdf'}
 ALLOWED_VIDEO_EXTENSIONS = {
@@ -87,21 +88,23 @@ def validate_image_file(file: UploadFile) -> None:
         )
 
 
+async def _save_upload_file(file: UploadFile, subfolder: str) -> tuple[str, str]:
+    from src.core.storage_service import storage_service
+
+    await file.seek(0)
+    stored_file = storage_service.upload_fileobj(
+        file.file,
+        subfolder=subfolder,
+        file_name=file.filename,
+        content_type=file.content_type,
+    )
+
+    return file.filename, stored_file.key
+
+
 async def save_file(file: UploadFile, subfolder: str) -> tuple[str, str]:
     validate_file(file)
-    
-    file_ext = Path(file.filename).suffix.lower()
-    unique_filename = f"{uuid.uuid4()}{file_ext}"
-    upload_dir = UPLOAD_BASE_DIR / subfolder
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    file_path = upload_dir / unique_filename
-    
-    with open(file_path, "wb") as buffer:
-        content = await file.read()
-        buffer.write(content)
-    
-    return file.filename, str(file_path)
+    return await _save_upload_file(file, subfolder)
 
 
 async def extract_video_metadata(file_path: str) -> Dict[str, Any]:
@@ -481,18 +484,7 @@ def get_completed_video_upload(upload_id: str) -> Dict[str, Any]:
 
 async def save_image_file(file: UploadFile, subfolder: str) -> tuple[str, str]:
     validate_image_file(file)
-
-    file_ext = Path(file.filename).suffix.lower()
-    unique_filename = f"{uuid.uuid4()}{file_ext}"
-    upload_dir = UPLOAD_BASE_DIR / subfolder
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = upload_dir / unique_filename
-    with open(file_path, "wb") as buffer:
-        content = await file.read()
-        buffer.write(content)
-
-    return file.filename, str(file_path)
+    return await _save_upload_file(file, subfolder)
 
 
 async def save_multiple_files(files: List[UploadFile], subfolder: str) -> List[tuple[str, str]]:
@@ -501,3 +493,70 @@ async def save_multiple_files(files: List[UploadFile], subfolder: str) -> List[t
         file_name, file_path = await save_file(file, subfolder)
         results.append((file_name, file_path))
     return results
+
+
+async def save_attorney_document(file: UploadFile, *, rsrc_no: int, job_no: int, attorney_id: int) -> tuple[str, str]:
+    return await save_file(file, attorney_prefix(rsrc_no=rsrc_no, job_no=job_no, attorney_id=attorney_id))
+
+
+async def save_attorney_camera_file(file: UploadFile, *, rsrc_no: int, job_no: int, attorney_id: int) -> tuple[str, str]:
+    return await save_image_file(file, attorney_prefix(rsrc_no=rsrc_no, job_no=job_no, attorney_id=attorney_id))
+
+
+async def save_billing_camera_file(file: UploadFile, *, rsrc_no: int, job_no: int, billing_id: int) -> tuple[str, str]:
+    return await save_image_file(file, billing_prefix(rsrc_no=rsrc_no, job_no=job_no, billing_id=billing_id))
+
+
+async def save_billing_documents(
+    files: List[UploadFile],
+    *,
+    rsrc_no: int,
+    job_no: int,
+    billing_id: int,
+) -> List[tuple[str, str]]:
+    return await save_multiple_files(
+        files,
+        f"{billing_prefix(rsrc_no=rsrc_no, job_no=job_no, billing_id=billing_id)}/documents",
+    )
+
+
+async def save_equipment_time_camera_file(
+    file: UploadFile,
+    *,
+    rsrc_no: int,
+    job_no: int,
+    equipment_time_id: int,
+) -> tuple[str, str]:
+    return await save_image_file(
+        file,
+        equipment_time_prefix(rsrc_no=rsrc_no, job_no=job_no, equipment_time_id=equipment_time_id),
+    )
+
+
+async def save_equipment_time_documents(
+    files: List[UploadFile],
+    *,
+    rsrc_no: int,
+    job_no: int,
+    equipment_time_id: int,
+) -> List[tuple[str, str]]:
+    return await save_multiple_files(
+        files,
+        f"{equipment_time_prefix(rsrc_no=rsrc_no, job_no=job_no, equipment_time_id=equipment_time_id)}/documents",
+    )
+
+
+def delete_stored_file_if_exists(file_path: Optional[str], label: str = "file") -> bool:
+    if not file_path:
+        return False
+
+    try:
+        from src.core.storage_service import storage_service
+
+        deleted = storage_service.delete(file_path)
+        if deleted:
+            logger.info("Deleted %s: %s", label, file_path)
+        return deleted
+    except Exception as exc:
+        logger.warning("Failed to delete %s %s: %s", label, file_path, exc)
+        return False

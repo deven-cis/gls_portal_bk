@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from src.core.context import get_context
 from src.core.file_utils import save_image_file
 from src.core.logger import logger
+from src.core.storage_prefixes import profile_picture_prefix
 from src.resources.models import Resources
 from src.resources.schema import ResourceResponseSchema
 from src.resources.utils import hash_password, verify_password
@@ -65,7 +66,7 @@ async def upload_profile_picture(rsrc_no: int, file: UploadFile, db: Session) ->
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
-        orig_name, path = await save_image_file(file, "profile_pictures")
+        orig_name, path = await save_image_file(file, profile_picture_prefix(rsrc_no=current_rsrc_no))
 
         resource.profile_image_url = path
         resource.last_modified_at = now

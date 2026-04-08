@@ -1,10 +1,10 @@
 from datetime import timedelta
-from pathlib import Path
 from typing import Dict
 
 from sqlalchemy.orm import Session
 
 from src.core.logger import logger
+from src.core.storage_service import storage_service
 from src.uploaded_videos.models import UploadedVideos
 
 
@@ -31,13 +31,16 @@ def cleanup_expired_uploaded_videos(db: Session, now, source: str = "unknown") -
 
     for upload in expired_uploads:
         for file_path in [upload.temp_file_path, upload.final_file_path]:
-            if file_path and Path(file_path).exists():
-                try:
-                    Path(file_path).unlink()
+            if not file_path:
+                continue
+            try:
+                if storage_service.delete(file_path):
                     deleted_files += 1
-                except Exception:
-                    logger.warning("Failed to delete expired upload file %s", file_path, exc_info=True)
+            except Exception:
+                logger.warning("Failed to delete expired upload file %s", file_path, exc_info=True)
 
+        upload.temp_file_path = None
+        upload.final_file_path = None
         upload.is_archived = True
         upload.status = "expired"
         upload.last_modified_at = now

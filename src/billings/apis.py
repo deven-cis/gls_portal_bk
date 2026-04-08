@@ -1,12 +1,11 @@
 from typing import List, Optional
-from pathlib import Path
 from fastapi import HTTPException, status, UploadFile, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from src.billings.models import Billings
-from src.billings.schema import BillingSchema, BillingWithDocumentsSchema, AdditionalDocumentResponseSchema
+from src.billings.utils import serialize_billing_with_documents
 from src.additional_documents.models import AdditionalDocuments
-from src.core.file_utils import save_multiple_files, save_image_file
+from src.core.file_utils import delete_stored_file_if_exists, save_billing_camera_file, save_billing_documents
 from src.core.logger import logger
 from src.core.timezone_utils import get_timezone_now
 from src.core.context import get_context
@@ -53,35 +52,19 @@ async def get_billing_by_job(job_no: int, db: Session) -> JSONResponse:
             .all()
         )
 
-        documents_data = [
-            AdditionalDocumentResponseSchema.model_validate(doc).model_dump()
-            for doc in documents
-        ]
-
-        billing_with_docs = BillingWithDocumentsSchema(
-            id=billing.id,
-            job_no=billing.job_no,
-            cancel_en_route=billing.cancel_en_route,
-            cancel_setup=billing.cancel_setup,
-            billing_notes=billing.billing_notes,
-            videographer_hours_present=billing.videographer_hours_present,
-            file_hours_length=billing.file_hours_length,
-            camera_captured_file_name=billing.camera_captured_file_name,
-            camera_captured_file_path=billing.camera_captured_file_path,
-            documents=documents_data
-        )
+        billing_data = serialize_billing_with_documents(billing, documents)
 
         logger.info(
             f"Successfully retrieved billing for job {job_no} "
-            f"(billing_id: {billing.id}) with {len(documents_data)} document(s)"
+            f"(billing_id: {billing.id}) with {len(documents)} document(s)"
         )
 
         return JSONResponse(
             content={
                 "status_code": status.HTTP_200_OK,
-                "message": f"Billing for job {job_no} found with {len(documents_data)} document(s)",
+                "message": f"Billing for job {job_no} found with {len(documents)} document(s)",
                 "success": True,
-                "result": billing_with_docs.model_dump()
+                "result": billing_data
             },
             status_code=status.HTTP_200_OK
         )
@@ -139,13 +122,6 @@ async def create_billing(
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Handle camera file upload
-        camera_captured_file_name, camera_captured_file_path = (
-            await save_image_file(camera_captured_file, "billings")
-            if camera_captured_file and camera_captured_file.filename
-            else (None, None)
-        )
-
         # Create billing
         billing = Billings()
         billing_payload = {
@@ -155,8 +131,6 @@ async def create_billing(
             "billing_notes": billing_notes,
             "videographer_hours_present": videographer_hours_present,
             "file_hours_length": file_hours_length,
-            "camera_captured_file_name": camera_captured_file_name,
-            "camera_captured_file_path": camera_captured_file_path,
             "entered_by": current_rsrc_no,
             "last_modified_by": current_rsrc_no,
             "entered_at": now,
@@ -169,10 +143,23 @@ async def create_billing(
         db.add(billing)
         db.flush()  # get billing.id before commit
 
+        if camera_captured_file and camera_captured_file.filename:
+            billing.camera_captured_file_name, billing.camera_captured_file_path = await save_billing_camera_file(
+                camera_captured_file,
+                rsrc_no=current_rsrc_no,
+                job_no=job_no,
+                billing_id=billing.id,
+            )
+
         # Handle additional documents
         documents_created = 0
         if files:
-            saved_files = await save_multiple_files(files, "billings")
+            saved_files = await save_billing_documents(
+                files,
+                rsrc_no=current_rsrc_no,
+                job_no=job_no,
+                billing_id=billing.id,
+            )
             for file_name, file_path in saved_files:
                 doc = AdditionalDocuments()
                 doc_payload = {
@@ -193,7 +180,15 @@ async def create_billing(
         db.commit()
         db.refresh(billing)
 
-        billing_data = BillingSchema.model_validate(billing).model_dump(mode='json')
+        documents = (
+            db.query(AdditionalDocuments)
+            .filter(
+                AdditionalDocuments.billing_id == billing.id,
+                AdditionalDocuments.is_archived == False
+            )
+            .all()
+        )
+        billing_data = serialize_billing_with_documents(billing, documents)
         message = f"Billing created successfully with {documents_created} document(s)" if documents_created else "Billing created successfully"
 
         logger.info(f"Billing created successfully for job {job_no} with {documents_created} document(s)")
@@ -315,22 +310,16 @@ async def update_billing(
                 setattr(billing, field, value.strip() if isinstance(value, str) else value)
                 fields_updated.append(field)
 
-        # Helper to delete file safely
-        def delete_file_if_exists(file_path: Optional[str], label: str):
-            if file_path:
-                try:
-                    path = Path(file_path)
-                    if path.exists():
-                        path.unlink()
-                        logger.info(f"Deleted {label}: {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete {label} {file_path}: {str(e)}")
-
         # Camera file handling
         if 'camera_captured_file' in form_data:
-            delete_file_if_exists(billing.camera_captured_file_path, "camera_captured_file")
+            delete_stored_file_if_exists(billing.camera_captured_file_path, "camera_captured_file")
             if camera_captured_file and camera_captured_file.filename:
-                billing.camera_captured_file_name, billing.camera_captured_file_path = await save_image_file(camera_captured_file, "billings")
+                billing.camera_captured_file_name, billing.camera_captured_file_path = await save_billing_camera_file(
+                    camera_captured_file,
+                    rsrc_no=current_rsrc_no,
+                    job_no=billing.job_no,
+                    billing_id=billing.id,
+                )
             else:
                 billing.camera_captured_file_name = None
                 billing.camera_captured_file_path = None
@@ -351,7 +340,7 @@ async def update_billing(
                     .first()
                 )
                 if doc:
-                    delete_file_if_exists(doc.file_path, "document")
+                    delete_stored_file_if_exists(doc.file_path, "document")
                     doc.is_archived = True
                     doc.last_modified_at = now
                     doc.last_modified_by = current_rsrc_no
@@ -367,7 +356,12 @@ async def update_billing(
         # Upload new documents
         documents_uploaded = 0
         if files:
-            saved_files = await save_multiple_files(files, "billings")
+            saved_files = await save_billing_documents(
+                files,
+                rsrc_no=current_rsrc_no,
+                job_no=billing.job_no,
+                billing_id=billing.id,
+            )
             for file_name, file_path in saved_files:
                 doc = AdditionalDocuments()
                 doc_payload = {
@@ -394,7 +388,15 @@ async def update_billing(
         db.commit()
         db.refresh(billing)
 
-        billing_data = BillingSchema.model_validate(billing).model_dump(mode='json')
+        documents = (
+            db.query(AdditionalDocuments)
+            .filter(
+                AdditionalDocuments.billing_id == billing.id,
+                AdditionalDocuments.is_archived == False
+            )
+            .all()
+        )
+        billing_data = serialize_billing_with_documents(billing, documents)
         message = (
             f"Billing updated successfully. Fields updated: {', '.join(fields_updated)}"
             if fields_updated
@@ -457,18 +459,24 @@ async def delete_billing(billing_id: int, db: Session) -> JSONResponse:
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Archive associated documents
-        db.query(AdditionalDocuments).filter(
-            AdditionalDocuments.billing_id == billing_id,
-            AdditionalDocuments.is_archived == False
-        ).update(
-            {
-                "is_archived": True,
-                "last_modified_at": now,
-                "last_modified_by": current_rsrc_no
-            },
-            synchronize_session=False
+        delete_stored_file_if_exists(billing.camera_captured_file_path, "camera_captured_file")
+        billing.camera_captured_file_name = None
+        billing.camera_captured_file_path = None
+
+        documents = (
+            db.query(AdditionalDocuments)
+            .filter(
+                AdditionalDocuments.billing_id == billing_id,
+                AdditionalDocuments.is_archived == False
+            )
+            .all()
         )
+        for doc in documents:
+            delete_stored_file_if_exists(doc.file_path, "document")
+            doc.is_archived = True
+            doc.last_modified_at = now
+            doc.last_modified_by = current_rsrc_no
+            db.add(doc)
 
         billing.is_archived = True
         billing.last_modified_at = now

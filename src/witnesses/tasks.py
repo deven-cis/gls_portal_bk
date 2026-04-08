@@ -1,4 +1,6 @@
 import asyncio
+import shutil
+import tempfile
 from pathlib import Path
 
 from sqlalchemy.exc import DatabaseError, OperationalError, SQLAlchemyError
@@ -7,6 +9,8 @@ from src.core.celery_config import celery_app
 from src.core.database import SessionLocal
 from src.core.file_utils import extract_video_metadata
 from src.core.logger import logger
+from src.core.storage_prefixes import merged_witness_video_prefix
+from src.core.storage_service import storage_service
 from src.core.timezone_utils import get_timezone_now
 from src.core.video_merge import (
     build_witness_merged_video_output_path,
@@ -21,6 +25,7 @@ from src.witness_videos.models import WitnessVideos
 def generate_witness_complete_video_task(witness_id: int, requested_by: int | None = None):
     session = None
     output_path = None
+    temp_workspace = None
     started_at = get_timezone_now()
 
     try:
@@ -55,19 +60,60 @@ def generate_witness_complete_video_task(witness_id: int, requested_by: int | No
         if not videos:
             raise ValueError('No witness videos are available to merge')
 
+        source_paths = [video.file_path for video in videos]
+        missing_videos = [
+            {"video_id": video.id, "file_path": video.file_path}
+            for video in videos
+            if not storage_service.exists(video.file_path)
+        ]
+        if missing_videos:
+            logger.warning(
+                "[Celery Task] Witness %s merge has missing source video file(s): %s",
+                witness.id,
+                missing_videos,
+            )
+            raise ValueError(
+                f"Witness {witness.id} merge cannot start because {len(missing_videos)} source video file(s) are missing"
+            )
+
+        if storage_service.is_s3:
+            temp_workspace = Path(tempfile.mkdtemp(prefix=f'witness_merge_{witness.id}_'))
+            staged_paths = []
+            for index, video in enumerate(videos, start=1):
+                source_name = video.file_name or Path(video.file_path).name or f'clip_{index}.mp4'
+                source_ext = Path(source_name).suffix or '.mp4'
+                staged_path = temp_workspace / f'clip_{index:03d}{source_ext}'
+                storage_service.download_to_path(video.file_path, staged_path)
+                staged_paths.append(str(staged_path))
+            source_paths = staged_paths
+
         output_path = build_witness_merged_video_output_path(witness.id, witness.job_no)
         merge_video_files_ffmpeg(
-            [video.file_path for video in videos],
+            source_paths,
             output_path,
             log_label=f'witness {witness.id} job {witness.job_no}',
         )
 
         metadata = asyncio.run(extract_video_metadata(str(output_path)))
+        output_file_size = metadata.get('file_size') or output_path.stat().st_size
+        stored_output_key = str(output_path)
+        stored_output_name = output_path.name
+        if storage_service.is_s3:
+            stored_output = storage_service.upload_path(
+                output_path,
+                subfolder=merged_witness_video_prefix(job_no=witness.job_no, witness_id=witness.id),
+                file_name=output_path.name,
+                content_type='video/mp4',
+            )
+            stored_output_key = stored_output.key
+            stored_output_name = stored_output.file_name
+            delete_file_if_exists(output_path)
+
         completed_at = get_timezone_now()
 
-        witness.merged_video_path = str(output_path)
-        witness.merged_video_name = output_path.name
-        witness.merged_video_size = metadata.get('file_size') or output_path.stat().st_size
+        witness.merged_video_path = stored_output_key
+        witness.merged_video_name = stored_output_name
+        witness.merged_video_size = output_file_size
         witness.merged_duration = metadata.get('duration_seconds')
         witness.merge_status = 'completed'
         witness.merge_error = None
@@ -82,8 +128,8 @@ def generate_witness_complete_video_task(witness_id: int, requested_by: int | No
         return {
             'status': 'success',
             'witness_id': witness.id,
-            'output_path': str(output_path),
-            'merged_video_name': output_path.name,
+            'output_path': stored_output_key,
+            'merged_video_name': stored_output_name,
         }
 
     except OperationalError as exc:
@@ -130,6 +176,8 @@ def generate_witness_complete_video_task(witness_id: int, requested_by: int | No
                 logger.warning('[Celery Task] Failed to persist witness merge failure state: %s', status_exc)
         return {'status': 'error', 'error_type': type(exc).__name__, 'error': str(exc), 'witness_id': witness_id}
     finally:
+        if temp_workspace is not None:
+            shutil.rmtree(temp_workspace, ignore_errors=True)
         if session:
             try:
                 session.close()

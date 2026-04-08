@@ -1,11 +1,10 @@
 from typing import List, Optional
 from fastapi import Request, UploadFile
 from fastapi.responses import JSONResponse
-from pathlib import Path
 from sqlalchemy.orm import Session
 from src.attorneys.models import Attorneys
-from src.core.file_utils import save_file, save_image_file
-from src.attorneys.schema import AttorneySchema
+from src.attorneys.utils import serialize_attorney, save_attorney_camera_upload, save_attorney_document_file
+from src.core.file_utils import delete_stored_file_if_exists
 from src.core.logger import logger
 from fastapi import status
 from sqlalchemy.orm import Session
@@ -34,10 +33,7 @@ async def list_attorneys_by_job(job_no: int, db: Session) -> JSONResponse:
             .all()
         )
 
-        attorneys_data = [
-            AttorneySchema.model_validate(attorney).model_dump(mode='json')
-            for attorney in attorneys
-        ]
+        attorneys_data = [serialize_attorney(attorney) for attorney in attorneys]
 
         logger.info(f"Successfully got {len(attorneys_data)} attorneys for job {job_no}")
         return JSONResponse(
@@ -101,39 +97,31 @@ async def create_attorney(
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        # Handle file uploads
-        file_name, file_name_path = (
-            await save_file(document, "attorneys")
-            if document and document.filename
-            else (None, None)
-        )
-
-        camera_captured_file_name, camera_captured_file_path = (
-            await save_image_file(camera_captured_file, "attorneys")
-            if camera_captured_file and camera_captured_file.filename
-            else (None, None)
-        )
-
         attorney = Attorneys(
             job_no=job_no,
             attorney_name=attorney_name,
             firm_name=firm_name,
             notes=notes,
             order_details=order_details,
-            file_name=file_name,
-            file_name_path=file_name_path,
-            camera_captured_file_name=camera_captured_file_name,
-            camera_captured_file_path=camera_captured_file_path,
             entered_by=current_rsrc_no,
             last_modified_by=current_rsrc_no,
             entered_at=now,
             last_modified_at=now
         )
         db.add(attorney)
+        db.flush()
+
+        # Handle file uploads after flush so the storage key can include attorney id.
+        if document and document.filename:
+            await save_attorney_document_file(attorney, document, current_rsrc_no)
+
+        if camera_captured_file and camera_captured_file.filename:
+            await save_attorney_camera_upload(attorney, camera_captured_file, current_rsrc_no)
+
         db.commit()
         db.refresh(attorney)
 
-        attorney_data = AttorneySchema.model_validate(attorney).model_dump(mode='json')
+        attorney_data = serialize_attorney(attorney)
         logger.info(f"Successfully created attorney {attorney_name} for job {job_no}")
 
         return JSONResponse(
@@ -218,22 +206,11 @@ async def update_attorney(
                 setattr(attorney, field, value.strip() if isinstance(value, str) else value)
                 fields_updated.append(field)
 
-        # Helper to delete file safely
-        def delete_file_if_exists(file_path: Optional[str], label: str):
-            if file_path:
-                try:
-                    path = Path(file_path)
-                    if path.exists():
-                        path.unlink()
-                        logger.info(f"Deleted {label}: {file_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete {label} {file_path}: {str(e)}")
-
         # Document file handling
         if document_field_sent:
-            delete_file_if_exists(attorney.file_name_path, "document")
+            delete_stored_file_if_exists(attorney.file_name_path, "document")
             if document and document.filename:
-                attorney.file_name, attorney.file_name_path = await save_file(document, "attorneys")
+                await save_attorney_document_file(attorney, document, current_rsrc_no)
             else:
                 attorney.file_name = None
                 attorney.file_name_path = None
@@ -241,9 +218,9 @@ async def update_attorney(
 
         # Camera file handling
         if camera_field_sent:
-            delete_file_if_exists(attorney.camera_captured_file_path, "camera_captured_file")
+            delete_stored_file_if_exists(attorney.camera_captured_file_path, "camera_captured_file")
             if camera_captured_file and camera_captured_file.filename:
-                attorney.camera_captured_file_name, attorney.camera_captured_file_path = await save_image_file(camera_captured_file, "attorneys")
+                await save_attorney_camera_upload(attorney, camera_captured_file, current_rsrc_no)
             else:
                 attorney.camera_captured_file_name = None
                 attorney.camera_captured_file_path = None
@@ -254,7 +231,7 @@ async def update_attorney(
         db.add(attorney)
         db.commit()
 
-        attorney_data = AttorneySchema.model_validate(attorney).model_dump(mode='json')
+        attorney_data = serialize_attorney(attorney)
         message = (
             f"Attorney updated successfully. Fields updated: {', '.join(fields_updated)}"
             if fields_updated
@@ -320,6 +297,15 @@ async def delete_attorney(attorney_id: int, db: Session) -> JSONResponse:
         attorney.is_archived = True
         attorney.last_modified_at = now
         attorney.last_modified_by = current_rsrc_no
+
+        delete_stored_file_if_exists(attorney.file_name_path, "document")
+        delete_stored_file_if_exists(attorney.camera_captured_file_path, "camera_captured_file")
+
+        attorney.file_name = None
+        attorney.file_name_path = None
+        attorney.camera_captured_file_name = None
+        attorney.camera_captured_file_path = None
+        
         db.add(attorney)
         db.commit()
 

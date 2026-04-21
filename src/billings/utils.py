@@ -3,7 +3,7 @@ from typing import List
 from src.additional_documents.models import AdditionalDocuments
 from src.billings.models import Billings
 from src.billings.schema import AdditionalDocumentResponseSchema, BillingWithDocumentsSchema
-from src.core.storage_service import storage_service
+from src.core.storage.storage_service import storage_service
 
 
 def serialize_additional_document(doc: AdditionalDocuments) -> dict:

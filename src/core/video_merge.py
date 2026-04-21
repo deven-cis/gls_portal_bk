@@ -1,17 +1,15 @@
 import json
-import os
 import shutil
 import subprocess
-import tempfile
 import uuid
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
-from src.core.config import config
 from src.core.file_utils import UPLOAD_BASE_DIR
 from src.core.logger import logger
+from src.core.storage.video_temp import make_video_merge_temp_dir
 import concurrent.futures
 
 MERGED_WITNESS_VIDEO_DIR = UPLOAD_BASE_DIR / "merged_witness_videos"
@@ -196,8 +194,11 @@ def _normalize_worker(task: dict) -> Tuple[str, float]:
         ffprobe_path = task['ffprobe_path']
         src = task['src']
         dst = task['dst']
-        
-        logger.info(f"[NORMALIZE] Starting: {src.name}")
+        clip_index = task.get('clip_index')
+        clip_total = task.get('clip_total')
+        clip_label = f"clip {clip_index}/{clip_total}" if clip_index and clip_total else src.name
+
+        logger.info(f"[NORMALIZE START] {clip_label}: source={src.name} output={dst.name}")
         start_time = time.time()
         
         # Probe for audio
@@ -255,11 +256,17 @@ def _normalize_worker(task: dict) -> Tuple[str, float]:
         output_duration = _probe_duration_seconds(ffprobe_path, dst)
         elapsed = time.time() - start_time
         
-        logger.info(f"[NORMALIZE] Complete: {src.name} -> {dst.name} (duration={_format_duration(output_duration)}, elapsed={elapsed:.1f}s)")
+        logger.info(
+            f"[NORMALIZE COMPLETE] {clip_label}: source={src.name} output={dst.name} "
+            f"(duration={_format_duration(output_duration)}, elapsed={elapsed:.1f}s)"
+        )
         return (str(dst), output_duration)
         
     except Exception as e:
-        logger.error(f"[NORMALIZE] Failed {task['src']}: {str(e)}")
+        clip_index = task.get('clip_index')
+        clip_total = task.get('clip_total')
+        clip_label = f"clip {clip_index}/{clip_total}" if clip_index and clip_total else str(task['src'])
+        logger.error(f"[NORMALIZE FAILED] {clip_label}: {str(e)}")
         raise
 
 
@@ -275,12 +282,11 @@ def _merge_compatible_videos(
     Fast merge using stream copy (no re-encoding).
     Returns: (output_path, total_duration_seconds)
     """
-    working_dir = Path(tempfile.gettempdir()) / f"merge_fast_{uuid.uuid4().hex}"
-    working_dir.mkdir(parents=True, exist_ok=True)
+    working_dir = make_video_merge_temp_dir(prefix=f"merge_fast_{uuid.uuid4().hex}_")
     concat_file = working_dir / "concat_list.txt"
 
     try:
-        logger.info(f"[MERGE] Concatenating {len(video_paths)} videos...")
+        logger.info(f"[CONCAT START] {log_label}: concatenating {len(video_paths)} video(s)")
         
         # Write concat demuxer file
         with open(concat_file, "w", encoding="utf-8") as handle:
@@ -293,7 +299,7 @@ def _merge_compatible_videos(
             _probe_duration_seconds(ffprobe_path, path) for path in video_paths
         )
         
-        logger.info(f"[MERGE] Source total duration: {_format_duration(source_duration_total)}")
+        logger.info(f"[CONCAT INPUT] {log_label}: source total duration={_format_duration(source_duration_total)}")
 
         # Use stream copy (no re-encoding) for speed
         concat_cmd = [
@@ -326,7 +332,7 @@ def _merge_compatible_videos(
             raise RuntimeError(f"Output video has no duration - merge may have failed")
 
         logger.info(
-            f"[MERGE] SUCCESS: Merged {len(video_paths)} videos into {output_path.name} "
+            f"[CONCAT COMPLETE] {log_label}: merged {len(video_paths)} video(s) into {output_path.name} "
             f"(duration={_format_duration(merged_duration)}, size={output_size_gb:.2f}GB, elapsed={merge_elapsed:.1f}s)"
         )
 
@@ -404,14 +410,13 @@ def merge_video_files_ffmpeg(
     if len(valid_paths) == 0:
         raise ValueError(f"Must provide at least 1 video for {log_label}")
 
-    logger.info(f"[MERGE START] {log_label}: {len(valid_paths)} videos")
+    logger.info(f"[MERGE START] {log_label}: {len(valid_paths)} input video(s)")
 
     ffmpeg_path = _find_ffmpeg_binary()
     ffprobe_path = _find_ffprobe_binary()
     
     # Create workspace
-    tmp_dir = Path(tempfile.gettempdir()) / f"vmerge_{uuid.uuid4().hex}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = make_video_merge_temp_dir(prefix=f"vmerge_{uuid.uuid4().hex}_")
     
     total_start_time = time.time()
 
@@ -423,7 +428,7 @@ def merge_video_files_ffmpeg(
         need_normalization = not _videos_already_compatible(ffprobe_path, valid_paths)
 
         if need_normalization:
-            logger.info(f"[PHASE 1] Normalizing {len(valid_paths)} videos to spec...")
+            logger.info(f"[PHASE 1 START] {log_label}: normalizing {len(valid_paths)} video(s) to static spec")
             
             # Build normalization tasks (preserves order)
             tasks = []
@@ -432,16 +437,24 @@ def merge_video_files_ffmpeg(
             for i, src_path in enumerate(valid_paths):
                 dst_path = tmp_dir / f"norm_{i:03d}.mp4"
                 normalized_paths.append(dst_path)
+                logger.info(
+                    f"[NORMALIZE QUEUED] {log_label}: clip {i + 1}/{len(valid_paths)} "
+                    f"source={src_path.name} output={dst_path.name}"
+                )
                 tasks.append({
                     'ffmpeg_path': ffmpeg_path,
                     'ffprobe_path': ffprobe_path,
                     'src': src_path,
                     'dst': dst_path,
+                    'clip_index': i + 1,
+                    'clip_total': len(valid_paths),
                 })
 
             # Parallel normalization (max workers based on CPU cores)
             durations = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tasks), 4)) as executor:
+            max_workers = min(len(tasks), 4)
+            logger.info(f"[PHASE 1 EXECUTOR] {log_label}: max_workers={max_workers}")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {executor.submit(_normalize_worker, task): i for i, task in enumerate(tasks)}
                 
                 for future in concurrent.futures.as_completed(futures):
@@ -449,20 +462,25 @@ def merge_video_files_ffmpeg(
                     try:
                         dst_str, duration = future.result()
                         durations[idx] = duration
+                        logger.info(
+                            f"[NORMALIZE FUTURE COMPLETE] {log_label}: clip {idx + 1}/{len(tasks)} "
+                            f"output={Path(dst_str).name} duration={_format_duration(duration)}"
+                        )
                     except Exception as e:
                         logger.error(f"Normalization failed for video {idx}: {e}")
                         raise
 
             # Use normalized paths for merge
             merge_paths = normalized_paths
+            logger.info(f"[PHASE 1 COMPLETE] {log_label}: all normalization jobs completed")
             
         else:
-            logger.info(f"[PHASE 1] Skipped - videos already match spec")
+            logger.info(f"[PHASE 1 SKIPPED] {log_label}: videos already match static spec")
             merge_paths = valid_paths
             durations = {}
 
         # Phase 2: Merge
-        logger.info(f"[PHASE 2] Merging {len(merge_paths)} normalized videos...")
+        logger.info(f"[PHASE 2 START] {log_label}: merging {len(merge_paths)} prepared video(s)")
         output_path, merged_duration = _merge_compatible_videos(
             ffmpeg_path,
             ffprobe_path,

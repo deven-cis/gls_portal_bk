@@ -1,7 +1,7 @@
 from typing import List
 
 from src.additional_documents.models import AdditionalDocuments
-from src.core.storage_service import storage_service
+from src.core.storage.storage_service import storage_service
 from src.equipment_time.models import EquipmentTime
 from src.equipment_time.schema import AdditionalDocumentResponseSchema, EquipmentTimeWithDocumentsSchema
 

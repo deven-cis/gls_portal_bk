@@ -15,6 +15,9 @@ class UploadedVideos(Base):
 
     temp_file_path = Column(Text, nullable=True)
     final_file_path = Column(Text, nullable=True)
+    multipart_upload_id = Column(Text, nullable=True)
+    multipart_object_key = Column(Text, nullable=True)
+    upload_strategy = Column(String(50), nullable=True)
 
     expected_file_size = Column(BigInteger, nullable=True)
     bytes_received = Column(BigInteger, nullable=True, default=0)

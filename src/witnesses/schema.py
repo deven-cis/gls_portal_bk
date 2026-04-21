@@ -155,8 +155,20 @@ class WitnessVideoUploadInitSchema(BaseModel):
     total_chunks: Optional[int] = None
 
 
+class WitnessVideoUploadPartUrlSchema(BaseModel):
+    upload_id: str
+    part_number: int
+
+
+class WitnessVideoUploadPartSchema(BaseModel):
+    part_number: int
+    etag: str
+
+
 class WitnessVideoUploadCompleteSchema(BaseModel):
     upload_id: str
+    parts: Optional[List[WitnessVideoUploadPartSchema]] = None
+    duration_seconds: Optional[float] = None
 
 
 class WitnessVideoUploadPauseSchema(BaseModel):

@@ -30,9 +30,12 @@ from src.witnesses.schema import (
     WitnessSchema,
     WitnessVideoUploadCompleteSchema,
     WitnessVideoUploadInitSchema,
+    WitnessVideoUploadPartUrlSchema,
 )
 from src.witnesses.utils import (
+    abort_direct_s3_upload_storage,
     build_upload_response as _build_upload_response,
+    build_direct_s3_part_upload_url,
     build_video_fields_from_upload as _build_video_fields_from_upload,
     build_complete_video_download_response,
     build_complete_video_download_url,
@@ -47,9 +50,11 @@ from src.witnesses.utils import (
     get_accessible_witness_video as _get_accessible_witness_video,
     get_storage_backend_name,
     get_upload_record as _get_upload_record,
+    initialize_direct_s3_upload_storage,
     mark_witness_merge_requested as _mark_witness_merge_requested,
     finalize_completed_upload_storage,
     normalize_time_string as _normalize_time_string,
+    complete_direct_s3_upload_storage,
     reset_witness_merge_fields as _reset_witness_merge_fields,
     stored_path_exists as _stored_path_exists,
 )
@@ -135,21 +140,32 @@ async def init_witness_video_upload(data: WitnessVideoUploadInitSchema, db: Sess
             last_modified_at=now,
             last_modified_by=current_rsrc_no,
         )
+        multipart = initialize_direct_s3_upload_storage(upload, current_rsrc_no)
         db.add(upload)
         db.commit()
+
+        result = {
+            "upload_id": upload.upload_id,
+            "file_name": upload.original_file_name,
+            "file_size": upload.expected_file_size,
+            "total_chunks": upload.total_chunks,
+            "status": upload.status,
+            "upload_strategy": upload.upload_strategy or "backend_chunked",
+        }
+        if multipart:
+            result.update(
+                {
+                    "multipart_object_key": multipart["key"],
+                    "part_url_endpoint": "/witnesses/uploads/multipart/part-url",
+                }
+            )
 
         return JSONResponse(
             content={
                 "status_code": status.HTTP_201_CREATED,
                 "message": "Video upload initialized successfully",
                 "success": True,
-                "result": {
-                    "upload_id": upload.upload_id,
-                    "file_name": upload.original_file_name,
-                    "file_size": upload.expected_file_size,
-                    "total_chunks": upload.total_chunks,
-                    "status": upload.status,
-                },
+                "result": result,
             },
             status_code=status.HTTP_201_CREATED,
         )
@@ -281,6 +297,87 @@ async def upload_witness_video_chunk(
         )
 
 
+async def get_witness_video_multipart_part_url(
+    data: WitnessVideoUploadPartUrlSchema,
+    db: Session,
+) -> JSONResponse:
+    try:
+        current_rsrc_no = get_context('rsrc_no')
+        now = get_timezone_now()
+        upload = _get_upload_record(data.upload_id, db, lock_for_update=True)
+
+        if upload.upload_strategy != "s3_multipart":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload session is not configured for direct S3 multipart upload",
+            )
+        if upload.status == "paused":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload is paused. Resume it before requesting more upload URLs.",
+            )
+        if upload.status in {"cancelled", "expired"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Upload is already in '{upload.status}' state.",
+            )
+        if upload.status in {"completed", "attaching", "attached"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Upload is already in '{upload.status}' state.",
+            )
+        if data.part_number < 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="part_number must be >= 1")
+        if upload.total_chunks and data.part_number > int(upload.total_chunks):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="part_number is greater than total_chunks",
+            )
+
+        upload.status = "uploading"
+        upload.last_modified_at = now
+        upload.last_modified_by = current_rsrc_no
+        db.add(upload)
+        db.commit()
+
+        upload_url = build_direct_s3_part_upload_url(upload, data.part_number)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_200_OK,
+                "message": "S3 multipart upload URL generated successfully",
+                "success": True,
+                "result": {
+                    "upload_id": upload.upload_id,
+                    "part_number": data.part_number,
+                    "upload_url": upload_url,
+                },
+            },
+            status_code=status.HTTP_200_OK,
+        )
+    except HTTPException as exc:
+        return JSONResponse(
+            content={
+                "status_code": exc.status_code,
+                "message": exc.detail,
+                "success": False,
+                "result": {},
+            },
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to generate S3 multipart upload URL: %s", exc, exc_info=True)
+        return JSONResponse(
+            content={
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": f"Failed to generate multipart upload URL: {str(exc)}",
+                "success": False,
+                "result": {},
+            },
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, db: Session) -> JSONResponse:
     try:
         current_rsrc_no = get_context('rsrc_no')
@@ -298,20 +395,34 @@ async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, 
                 detail="Upload is paused. Resume it before completing.",
             )
 
-        if upload.total_chunks is None or upload.received_chunks != upload.total_chunks:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Upload is incomplete ({upload.received_chunks}/{upload.total_chunks} chunks received)",
-            )
-        if not upload.temp_file_path or not Path(upload.temp_file_path).exists():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Uploaded temp file is no longer available. The upload may have been cancelled.",
-            )
+        metadata_cleanup_path = None
+        if upload.upload_strategy == "s3_multipart":
+            parts = [part.model_dump() for part in (data.parts or [])]
+            complete_direct_s3_upload_storage(upload, parts)
+            upload.received_chunks = upload.total_chunks
+            upload.bytes_received = upload.expected_file_size
+            metadata = {
+                "file_size": upload.expected_file_size or upload.bytes_received,
+                "duration_seconds": data.duration_seconds,
+                "timecode": None,
+                "format_name": upload.content_type,
+            }
+        else:
+            if upload.total_chunks is None or upload.received_chunks != upload.total_chunks:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Upload is incomplete ({upload.received_chunks}/{upload.total_chunks} chunks received)",
+                )
+            if not upload.temp_file_path or not Path(upload.temp_file_path).exists():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Uploaded temp file is no longer available. The upload may have been cancelled.",
+                )
+            metadata_source_path = Path(upload.temp_file_path)
 
-        metadata = await extract_video_metadata(upload.temp_file_path)
-        if not metadata.get("file_size"):
-            temp_file = Path(upload.temp_file_path)
+            metadata = await extract_video_metadata(str(metadata_source_path))
+        if upload.upload_strategy != "s3_multipart" and not metadata.get("file_size"):
+            temp_file = Path(metadata_source_path)
             if not temp_file.exists():
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -323,7 +434,10 @@ async def complete_witness_video_upload(data: WitnessVideoUploadCompleteSchema, 
         upload.duration_seconds = metadata.get("duration_seconds")
         upload.timecode = metadata.get("timecode")
         upload.format_name = metadata.get("format_name")
-        finalize_completed_upload_storage(upload, current_rsrc_no)
+        if upload.upload_strategy != "s3_multipart":
+            finalize_completed_upload_storage(upload, current_rsrc_no)
+        if metadata_cleanup_path:
+            Path(metadata_cleanup_path).unlink(missing_ok=True)
         upload.status = "completed"
         upload.last_modified_at = now
         upload.last_modified_by = current_rsrc_no
@@ -488,6 +602,13 @@ async def cancel_witness_video_upload(data: WitnessVideoUploadCancelSchema, db: 
             )
 
         deleted_files = 0
+        aborted_multipart = False
+        if upload.upload_strategy == "s3_multipart" and upload.multipart_upload_id:
+            try:
+                aborted_multipart = abort_direct_s3_upload_storage(upload)
+            except Exception:
+                logger.warning("Failed to abort S3 multipart upload %s", upload.upload_id, exc_info=True)
+
         for file_path in [upload.temp_file_path, upload.final_file_path]:
             if file_path and _delete_stored_path(file_path):
                 deleted_files += 1
@@ -510,6 +631,7 @@ async def cancel_witness_video_upload(data: WitnessVideoUploadCancelSchema, db: 
                     "upload_id": upload.upload_id,
                     "status": upload.status,
                     "deleted_files": deleted_files,
+                    "aborted_multipart": aborted_multipart,
                 },
             },
             status_code=status.HTTP_200_OK,
@@ -806,10 +928,34 @@ async def request_witness_complete_video_merge(
         if stale_path:
             _delete_stored_path(stale_path)
 
-        celery_app.send_task(
-            'src.witnesses.tasks.generate_witness_complete_video_task',
-            args=[witness.id, current_rsrc_no],
+        merge_request_marker = witness.merge_requested_at.isoformat() if witness.merge_requested_at else None
+        logger.info(
+            "Queueing witness complete-video merge task: witness_id=%s requested_by=%s merge_requested_at=%s",
+            witness.id,
+            current_rsrc_no,
+            merge_request_marker,
         )
+        try:
+            celery_app.send_task(
+                'src.witnesses.tasks.generate_witness_complete_video_task',
+                args=[
+                    witness.id,
+                    current_rsrc_no,
+                    merge_request_marker,
+                ],
+            )
+        except Exception:
+            db.refresh(witness)
+            _reset_witness_merge_fields(
+                witness,
+                get_timezone_now(),
+                current_rsrc_no,
+                status_value="not_requested",
+                error_message=None,
+            )
+            db.add(witness)
+            db.commit()
+            raise
         db.refresh(witness)
 
         return JSONResponse(
@@ -1280,7 +1426,7 @@ async def save_witness_and_videos(
     try:
         current_rsrc_no = get_context('rsrc_no')
         now = get_timezone_now()
-        video_structure_changed = False
+        source_videos_changed = False
         merge_artifact_to_delete = None
         video_files_to_delete = set()
 
@@ -1389,7 +1535,7 @@ async def save_witness_and_videos(
                     ev.is_archived = True
                     ev.last_modified_at = now
                     ev.last_modified_by = current_rsrc_no
-                    video_structure_changed = True
+                    source_videos_changed = True
 
         # Process video items
         for item in data.videos:
@@ -1410,7 +1556,7 @@ async def save_witness_and_videos(
                     vid.is_archived = True
                     vid.last_modified_at = now
                     vid.last_modified_by = current_rsrc_no
-                    video_structure_changed = True
+                    source_videos_changed = True
                 continue
 
             # Update existing video
@@ -1437,11 +1583,10 @@ async def save_witness_and_videos(
                     update_vid["end_time"] = _normalize_time_string(item.end_time)
 
                 item_dict = item.model_dump(exclude_unset=True)
-                if item.start_time is not None or item.end_time is not None or item.upload_token or 'file_index' in item_dict:
-                    video_structure_changed = True
                 if item.upload_token:
                     if vid.file_path:
                         video_files_to_delete.add(vid.file_path)
+                    source_videos_changed = True
                     upload_data = _consume_completed_upload(
                         item.upload_token,
                         db,
@@ -1453,6 +1598,7 @@ async def save_witness_and_videos(
                 elif 'file_index' in item_dict:
                     if vid.file_path:
                         video_files_to_delete.add(vid.file_path)
+                    source_videos_changed = True
                     if item.file_index is not None and 0 <= item.file_index < len(files):
                         file_name, file_path, metadata = await save_video_file(
                             files[item.file_index], "witness_videos"
@@ -1484,7 +1630,7 @@ async def save_witness_and_videos(
                     if item.file_index is not None and 0 <= item.file_index < len(files)
                     else (None, None, {})
                 )
-            video_structure_changed = True
+            source_videos_changed = True
             new_vid = WitnessVideos(
                 wit_no=witness.id,
                 job_no=witness.job_no,
@@ -1517,7 +1663,11 @@ async def save_witness_and_videos(
                 new_vid.duration_seconds = upload_data.get("duration_seconds")
                 new_vid.timecode = upload_data.get("timecode")
 
-        if video_structure_changed:
+        if source_videos_changed:
+            logger.info(
+                "Resetting witness merge state because source videos changed for witness_id=%s",
+                witness.id,
+            )
             merge_artifact_to_delete = _reset_witness_merge_fields(witness, now, current_rsrc_no)
 
         witness.last_modified_at = now

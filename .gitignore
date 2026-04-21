@@ -2,8 +2,9 @@
 env/
 .env
 .venv/
-# /ENVs/*
+/ENVs/*
 .vscode/
+.codex
 
 # Python
 __pycache__/

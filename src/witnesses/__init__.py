@@ -12,6 +12,7 @@ from src.witnesses.apis import (
     update_witness_name,
     init_witness_video_upload,
     upload_witness_video_chunk,
+    get_witness_video_multipart_part_url,
     complete_witness_video_upload,
     pause_witness_video_upload,
     resume_witness_video_upload,
@@ -32,6 +33,7 @@ from src.witnesses.schema import (
     WitnessNameUpdateSchema,
     WitnessVideoUploadInitSchema,
     WitnessVideoUploadCompleteSchema,
+    WitnessVideoUploadPartUrlSchema,
     WitnessVideoUploadPauseSchema,
     WitnessVideoUploadResumeSchema,
     WitnessVideoUploadCancelSchema,
@@ -158,6 +160,15 @@ async def upload_witness_video_chunk_endpoint(
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     return await upload_witness_video_chunk(upload_id, chunk_number, total_chunks, file, db)
+
+
+@witnesses_api.post("/uploads/multipart/part-url", status_code=200)
+async def get_witness_video_multipart_part_url_endpoint(
+    data: WitnessVideoUploadPartUrlSchema,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return await get_witness_video_multipart_part_url(data, db)
 
 
 @witnesses_api.post("/uploads/complete", status_code=200)

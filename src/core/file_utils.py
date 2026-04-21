@@ -9,7 +9,7 @@ from fastapi import UploadFile, HTTPException, status
 import aiofiles
 from src.core.config import config
 from src.core.logger import logger
-from src.core.storage_prefixes import attorney_prefix, billing_prefix, equipment_time_prefix
+from src.core.storage.storage_prefixes import attorney_prefix, billing_prefix, equipment_time_prefix
 
 ALLOWED_EXTENSIONS = {'.docx', '.pdf'}
 ALLOWED_VIDEO_EXTENSIONS = {
@@ -89,7 +89,7 @@ def validate_image_file(file: UploadFile) -> None:
 
 
 async def _save_upload_file(file: UploadFile, subfolder: str) -> tuple[str, str]:
-    from src.core.storage_service import storage_service
+    from src.core.storage.storage_service import storage_service
 
     await file.seek(0)
     stored_file = storage_service.upload_fileobj(
@@ -551,7 +551,7 @@ def delete_stored_file_if_exists(file_path: Optional[str], label: str = "file") 
         return False
 
     try:
-        from src.core.storage_service import storage_service
+        from src.core.storage.storage_service import storage_service
 
         deleted = storage_service.delete(file_path)
         if deleted:

@@ -3,7 +3,7 @@ from fastapi import UploadFile
 from src.attorneys.models import Attorneys
 from src.attorneys.schema import AttorneySchema
 from src.core.file_utils import save_attorney_camera_file, save_attorney_document
-from src.core.storage_service import storage_service
+from src.core.storage.storage_service import storage_service
 
 
 def serialize_attorney(attorney: Attorneys) -> dict:

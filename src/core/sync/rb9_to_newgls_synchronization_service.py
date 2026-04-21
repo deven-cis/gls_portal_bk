@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, Type
 from sqlalchemy.orm import Session
 
 from src.core.logger import logger
-from src.core.rb9_database import Rb9DatabaseConnection
+from src.core.sync.rb9_database import Rb9DatabaseConnection
 from src.core.database import SessionLocal
 from src.core.timezone_utils import get_timezone_now
 from src.core.sync.synchronization_configuration import get_sync_order, get_table_config_stage2
@@ -740,4 +740,3 @@ class Rb9ToNewGlsSynchronizationService:
             'total_errors': total_errors,
             'total_emails_sent': total_emails
         }
-

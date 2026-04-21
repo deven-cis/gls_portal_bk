@@ -4,12 +4,12 @@ from typing import Dict
 from sqlalchemy.orm import Session
 
 from src.core.logger import logger
-from src.core.storage_service import storage_service
+from src.core.storage.storage_service import storage_service
 from src.uploaded_videos.models import UploadedVideos
 
 
 def cleanup_expired_uploaded_videos(db: Session, now, source: str = "unknown") -> Dict[str, int]:
-    cleanup_cutoff = now - timedelta(hours=1)
+    cleanup_cutoff = now - timedelta(hours=2)
     cleanup_statuses = ("initialized", "uploading", "uploaded", "completed", "attach_failed", "paused")
 
     expired_uploads = (
@@ -30,6 +30,16 @@ def cleanup_expired_uploaded_videos(db: Session, now, source: str = "unknown") -
     archived_uploads = 0
 
     for upload in expired_uploads:
+        if upload.upload_strategy == "s3_multipart" and upload.multipart_upload_id:
+            try:
+                if storage_service.abort_multipart_upload(
+                    key=upload.multipart_object_key,
+                    multipart_upload_id=upload.multipart_upload_id,
+                ):
+                    logger.info("Aborted expired S3 multipart upload %s", upload.upload_id)
+            except Exception:
+                logger.warning("Failed to abort expired S3 multipart upload %s", upload.upload_id, exc_info=True)
+
         for file_path in [upload.temp_file_path, upload.final_file_path]:
             if not file_path:
                 continue
@@ -41,6 +51,8 @@ def cleanup_expired_uploaded_videos(db: Session, now, source: str = "unknown") -
 
         upload.temp_file_path = None
         upload.final_file_path = None
+        upload.multipart_upload_id = None
+        upload.multipart_object_key = None
         upload.is_archived = True
         upload.status = "expired"
         upload.last_modified_at = now

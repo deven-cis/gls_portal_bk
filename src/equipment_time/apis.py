@@ -33,7 +33,7 @@ async def get_equipment_time_by_job(job_no: int, db: Session) -> JSONResponse:
         )
 
         if not equipment_time:
-            logger.error(f"Equipment time for job_no {job_no} not found or access denied")
+            logger.warning(f"Equipment time for job_no {job_no} not found or access denied")
             return JSONResponse(
                 content={
                     "status_code": status.HTTP_404_NOT_FOUND,

@@ -4,13 +4,21 @@ from fastapi.responses import JSONResponse
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 from src.core.context import get_context
-from src.core.file_utils import save_image_file
+from src.core.file_utils import delete_stored_file_if_exists, save_image_file
 from src.core.logger import logger
-from src.core.storage_prefixes import profile_picture_prefix
+from src.core.storage.storage_prefixes import profile_picture_prefix
+from src.core.storage.storage_service import storage_service
 from src.resources.models import Resources
 from src.resources.schema import ResourceResponseSchema
 from src.resources.utils import hash_password, verify_password
 from src.auth.schema import PasswordChangeSchema
+
+
+def _serialize_resource(resource: Resources) -> dict:
+    resource_data = ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
+    if resource.profile_image_url:
+        resource_data["profile_image_url"] = storage_service.generate_download_url(resource.profile_image_url)
+    return resource_data
 
 
 async def get_current_user_profile(rsrc_no: int, db: Session) -> JSONResponse:
@@ -27,7 +35,7 @@ async def get_current_user_profile(rsrc_no: int, db: Session) -> JSONResponse:
                 },
                 status_code=status.HTTP_404_NOT_FOUND,
             )
-        resource_data = ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
+        resource_data = _serialize_resource(resource)
         logger.info(
             f"get current resource profile success for resource: {resource.email} (ID: {resource.id})"
         )
@@ -66,6 +74,7 @@ async def upload_profile_picture(rsrc_no: int, file: UploadFile, db: Session) ->
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        previous_profile_image_url = resource.profile_image_url
         orig_name, path = await save_image_file(file, profile_picture_prefix(rsrc_no=current_rsrc_no))
 
         resource.profile_image_url = path
@@ -73,7 +82,9 @@ async def upload_profile_picture(rsrc_no: int, file: UploadFile, db: Session) ->
         resource.last_modified_by = current_rsrc_no
         db.commit()
         db.refresh(resource)
-        resource_data = ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
+        if previous_profile_image_url and previous_profile_image_url != path:
+            delete_stored_file_if_exists(previous_profile_image_url, label="profile picture")
+        resource_data = _serialize_resource(resource)
         logger.info(
             f"upload profile picture success for resource: {resource.email} (ID: {resource.id})"
         )
@@ -114,12 +125,14 @@ async def remove_profile_picture(rsrc_no: int, db: Session) -> JSONResponse:
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        previous_profile_image_url = resource.profile_image_url
         resource.profile_image_url = None
         resource.last_modified_at = now
         resource.last_modified_by = rsrc_no_from_context
         db.commit()
         db.refresh(resource)
-        resource_data = ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
+        delete_stored_file_if_exists(previous_profile_image_url, label="profile picture")
+        resource_data = _serialize_resource(resource)
         logger.info(
             f"remove profile picture success for resource: {resource.email} (ID: {resource.id})"
         )
@@ -217,7 +230,7 @@ async def assignee_users_list(db: Session) -> JSONResponse:
     try:
         list_of_resources = db.query(Resources).filter(Resources.is_archived == False, Resources.is_active == True, Resources.rsrc_type == 'Videographer').all()
         list_of_resources_data = [
-            ResourceResponseSchema.model_validate(resource).model_dump(mode="json")
+            _serialize_resource(resource)
             for resource in list_of_resources
         ]
         logger.info(f"Get list of resources success for {len(list_of_resources_data)} resources")

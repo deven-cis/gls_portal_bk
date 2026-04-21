@@ -11,8 +11,8 @@ from src.cases.models import Cases
 from src.core.config import config
 from src.core.context import get_context
 from src.core.rbac import get_current_user_role, is_admin_role
-from src.core.storage_prefixes import temp_video_prefix, witness_video_prefix
-from src.core.storage_service import storage_service
+from src.core.storage.storage_prefixes import temp_video_prefix, witness_video_prefix
+from src.core.storage.storage_service import storage_service
 from src.uploaded_videos.models import UploadedVideos
 from src.witness_videos.models import WitnessVideos
 from src.witnesses.models import Witnesses
@@ -127,6 +127,7 @@ def build_upload_response(upload: UploadedVideos) -> Dict[str, Any]:
         "timecode": upload.timecode,
         "format_name": upload.format_name,
         "status": upload.status,
+        "upload_strategy": upload.upload_strategy or "backend_chunked",
     }
 
 
@@ -386,6 +387,93 @@ def finalize_completed_upload_storage(upload: UploadedVideos, current_rsrc_no: i
     Path(upload.temp_file_path).unlink(missing_ok=True)
     upload.stored_file_name = stored_temp.file_name
     upload.temp_file_path = stored_temp.key
+
+
+def initialize_direct_s3_upload_storage(upload: UploadedVideos, current_rsrc_no: int) -> Optional[dict]:
+    if not storage_service.is_s3:
+        return None
+
+    multipart = storage_service.create_multipart_upload(
+        subfolder=temp_video_prefix(rsrc_no=current_rsrc_no, upload_id=upload.upload_id),
+        file_name=upload.original_file_name,
+        content_type=upload.content_type,
+    )
+    upload.upload_strategy = "s3_multipart"
+    upload.stored_file_name = multipart["file_name"]
+    upload.temp_file_path = multipart["key"]
+    upload.multipart_object_key = multipart["key"]
+    upload.multipart_upload_id = multipart["multipart_upload_id"]
+    return multipart
+
+
+def build_direct_s3_part_upload_url(upload: UploadedVideos, part_number: int) -> str:
+    if not upload.multipart_upload_id or not upload.multipart_object_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload session is not configured for direct S3 multipart upload",
+        )
+
+    return storage_service.generate_multipart_part_url(
+        key=upload.multipart_object_key,
+        multipart_upload_id=upload.multipart_upload_id,
+        part_number=part_number,
+    )
+
+
+def complete_direct_s3_upload_storage(upload: UploadedVideos, parts: list[dict]) -> None:
+    if not upload.multipart_upload_id or not upload.multipart_object_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload session is not configured for direct S3 multipart upload",
+        )
+    if not parts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded S3 parts are required to complete multipart upload",
+        )
+
+    storage_service.complete_multipart_upload(
+        key=upload.multipart_object_key,
+        multipart_upload_id=upload.multipart_upload_id,
+        parts=[
+            {"PartNumber": part["part_number"], "ETag": part["etag"]}
+            for part in parts
+        ],
+    )
+    upload.temp_file_path = upload.multipart_object_key
+    upload.multipart_upload_id = None
+    upload.multipart_object_key = None
+
+
+def abort_direct_s3_upload_storage(upload: UploadedVideos) -> bool:
+    aborted = storage_service.abort_multipart_upload(
+        key=upload.multipart_object_key,
+        multipart_upload_id=upload.multipart_upload_id,
+    )
+    upload.multipart_upload_id = None
+    upload.multipart_object_key = None
+    return aborted
+
+
+def prepare_upload_file_for_metadata(upload: UploadedVideos) -> tuple[Path, Optional[Path]]:
+    if not upload.temp_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Uploaded temp file is no longer available. The upload may have been cancelled.",
+        )
+
+    if storage_service.is_s3:
+        local_path = Path("/tmp") / f"metadata_{upload.upload_id}{upload.file_ext}"
+        storage_service.download_to_path(upload.temp_file_path, local_path)
+        return local_path, local_path
+
+    local_path = Path(upload.temp_file_path)
+    if not local_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Uploaded temp file is no longer available. The upload may have been cancelled.",
+        )
+    return local_path, None
 
 
 def build_witness_video_download_url(

@@ -38,6 +38,7 @@ from src.witnesses.utils import (
     build_direct_s3_part_upload_url,
     build_video_fields_from_upload as _build_video_fields_from_upload,
     build_complete_video_download_response,
+    build_complete_video_download_name,
     build_complete_video_download_url,
     build_witness_video_download_response,
     build_witness_video_download_url,
@@ -1070,7 +1071,7 @@ async def get_witness_complete_video_download_link(
                 "result": {
                     **_build_witness_merge_result(witness),
                     "download_url": download_url,
-                    "file_name": witness.merged_video_name or merged_path.name,
+                    "file_name": build_complete_video_download_name(witness),
                 },
             },
             status_code=status.HTTP_200_OK,

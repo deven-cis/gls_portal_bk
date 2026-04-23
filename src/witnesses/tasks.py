@@ -21,6 +21,7 @@ from src.core.video_merge import (
 )
 from src.witnesses.models import Witnesses
 from src.witness_videos.models import WitnessVideos
+from src.witnesses.utils import build_complete_video_download_name
 
 
 STALE_MERGE_REASON = "stale_merge_request"
@@ -266,12 +267,12 @@ def generate_witness_complete_video_task(
         metadata = asyncio.run(extract_video_metadata(str(output_path)))
         output_file_size = metadata.get('file_size') or output_path.stat().st_size
         stored_output_key = str(output_path)
-        stored_output_name = output_path.name
+        stored_output_name = build_complete_video_download_name(witness)
         if storage_service.is_s3:
             stored_output = storage_service.upload_path(
                 output_path,
                 subfolder=merged_witness_video_prefix(job_no=witness.job_no, witness_id=witness.id),
-                file_name=output_path.name,
+                file_name=stored_output_name,
                 content_type='video/mp4',
             )
             stored_output_key = stored_output.key

@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, Optional
 from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
@@ -102,6 +103,22 @@ def normalize_time_string(value: Optional[str]) -> Optional[str]:
         return str(t)
     except Exception:
         return None
+
+
+def _sanitize_download_name_part(value: Optional[str], fallback: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return fallback
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text)
+    text = text.strip("_")
+    return text or fallback
+
+
+def build_complete_video_download_name(witness: Witnesses) -> str:
+    suffix = Path(witness.merged_video_path or witness.merged_video_name or "video.mp4").suffix or ".mp4"
+    job_part = _sanitize_download_name_part(f"Job{witness.job_no}", "Job")
+    witness_part = _sanitize_download_name_part(witness.witness_name, "Witness")
+    return f"{job_part}_{witness_part}_Merged{suffix}"
 
 
 def build_video_fields_from_upload(upload_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -589,7 +606,7 @@ def build_complete_video_download_url(
     current_rsrc_no: int,
     current_role: Optional[str],
 ):
-    file_name = witness.merged_video_name or Path(witness.merged_video_path).name
+    file_name = build_complete_video_download_name(witness)
     if storage_service.is_s3:
         return storage_service.generate_download_url(
             witness.merged_video_path,
@@ -602,7 +619,7 @@ def build_complete_video_download_url(
 
 
 def build_complete_video_download_response(witness: Witnesses):
-    download_name = witness.merged_video_name or Path(witness.merged_video_path).name
+    download_name = build_complete_video_download_name(witness)
     if storage_service.is_s3:
         download_url = storage_service.generate_download_url(
             witness.merged_video_path,
